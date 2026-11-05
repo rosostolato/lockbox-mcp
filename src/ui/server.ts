@@ -12,9 +12,11 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
+import { CUSTOM_ADAPTER_ID } from '../adapters/registry.js';
 import type { SecretBroker, SecretRequest } from '../broker.js';
-import type { VeilConfig } from '../config.js';
-import { ErrorCode, VeilError, veilError } from '../errors.js';
+import { SAVED_NAME, SavedDestinations } from '../custom/store.js';
+import type { LockboxConfig } from '../config.js';
+import { ErrorCode, LockboxError, lockboxError } from '../errors.js';
 import { newToken, tokenEquals } from '../ids.js';
 import { AuditLogger, getLogger } from '../logging.js';
 import { RequestState, isTerminal } from '../model.js';
@@ -30,14 +32,14 @@ export const MAX_BODY_BYTES = MAX_SECRET_BYTES + 4096;
  */
 export const DRAIN_LIMIT_BYTES = 1 << 20;
 /**
- * Above this many pending requests Veil stops opening windows by itself: an
+ * Above this many pending requests Lockbox stops opening windows by itself: an
  * agent that spams `secret.store` must not be able to carpet the screen.
  */
 export const MAX_AUTO_OPENED_WINDOWS = 3;
 
 const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
 
-/** The exact shape of a Veil authorization URL, and nothing else. */
+/** The exact shape of a Lockbox authorization URL, and nothing else. */
 const OPENABLE_URL =
   /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d{1,5}\/r\/[A-Za-z0-9_-]{1,64}\/[A-Za-z0-9_-]{1,128}$/;
 
@@ -62,7 +64,7 @@ export class SecureInputUI {
 
   constructor(
     readonly broker: SecretBroker,
-    readonly config: VeilConfig,
+    readonly config: LockboxConfig,
     options: { logger?: AuditLogger } = {},
   ) {
     this.log = options.logger ?? getLogger();
@@ -76,7 +78,7 @@ export class SecureInputUI {
     // The Host check is a browser defence only; any LAN client can send
     // `Host: 127.0.0.1`. Binding anywhere but loopback would expose the window.
     if (!isLoopbackBindAddress(this.config.uiHost)) {
-      throw new Error('VEIL_UI_HOST must be a loopback address (127.0.0.1, ::1 or localhost).');
+      throw new Error('LOCKBOX_UI_HOST must be a loopback address (127.0.0.1, ::1 or localhost).');
     }
     const server = createServer((request, response) => {
       this.#handle(request, response).catch(() => {
@@ -220,7 +222,7 @@ export class SecureInputUI {
     }
     if (!this.#originOk(request)) {
       this.log.security('ui_cross_origin_post', { component: 'ui' });
-      this.#errorPage(response, 403, 'This form can only be sent from Veil’s own window.');
+      this.#errorPage(response, 403, 'This form can only be sent from Lockbox’s own window.');
       return;
     }
     const linkCancel = parts.length === 4 && parts[0] === 'r' && parts[3] === 'cancel';
@@ -260,6 +262,9 @@ export class SecureInputUI {
         case 'cancel':
           this.#cancel(this.#authenticated(request, requestId));
           break;
+        case 'forget':
+          await this.#forget(this.#authenticated(request, requestId));
+          break;
         case 'link-cancel': {
           const link = parts[2] as string;
           this.#cancel(this.#byLink(requestId, link));
@@ -272,7 +277,7 @@ export class SecureInputUI {
           return;
       }
     } catch (error) {
-      if (error instanceof VeilError) {
+      if (error instanceof LockboxError) {
         this.#errorPage(response, STATUS_FOR_CODE[error.public.code] ?? 400, error.public.message);
         return;
       }
@@ -317,7 +322,7 @@ export class SecureInputUI {
     const request = this.broker.get(requestId);
     if (!tokenEquals(request.submitToken, link)) {
       this.log.security('ui_token_mismatch', { request_id: request.requestId, component: 'ui' });
-      throw veilError(ErrorCode.UNAUTHORIZED, 'Invalid or expired authorization link.');
+      throw lockboxError(ErrorCode.UNAUTHORIZED, 'Invalid or expired authorization link.');
     }
     return request;
   }
@@ -329,9 +334,9 @@ export class SecureInputUI {
     const presented = cookieValues(http.headers.cookie, SESSION_COOKIE);
     if (!session || !presented.some((value) => tokenEquals(session, value))) {
       this.log.security('ui_session_missing', { request_id: request.requestId, component: 'ui' });
-      throw veilError(
+      throw lockboxError(
         ErrorCode.UNAUTHORIZED,
-        'This page only works in the window Veil opened. Ask the agent for a new request.',
+        'This page only works in the window Lockbox opened. Ask the agent for a new request.',
       );
     }
     return request;
@@ -349,7 +354,7 @@ export class SecureInputUI {
     try {
       request = this.#byLink(requestId, link);
     } catch (error) {
-      if (error instanceof VeilError) {
+      if (error instanceof LockboxError) {
         this.#errorPage(response, STATUS_FOR_CODE[error.public.code] ?? 400, error.public.message);
         return;
       }
@@ -392,7 +397,7 @@ export class SecureInputUI {
     try {
       request = this.#authenticated(http, requestId);
     } catch (error) {
-      if (error instanceof VeilError) {
+      if (error instanceof LockboxError) {
         this.#errorPage(response, STATUS_FOR_CODE[error.public.code] ?? 400, error.public.message);
         return;
       }
@@ -416,6 +421,7 @@ export class SecureInputUI {
           secondsLeft,
           confirmToken: request.confirmToken,
           mismatch,
+          allowSave: this.config.customDestinations === 'save',
         }),
       );
       return;
@@ -458,8 +464,47 @@ export class SecureInputUI {
         return false;
       }
     }
+    const saveAs = this.#saveRequest(request, body);
     await this.broker.confirmExecution(request.requestId, provided);
+    // Keep the destination only once it actually worked (REQ-013).
+    if (saveAs && request.state === RequestState.STORED) {
+      const { definition_json: canonical, definition_hash: hash } = request.snapshot.target.fields;
+      if (canonical && hash) {
+        await SavedDestinations.for(this.config).save(saveAs, canonical, hash);
+        this.log.event('custom_destination_saved', {
+          request_id: request.requestId,
+          component: 'ui',
+          detail: { name: saveAs, hash_prefix: hash.slice(0, 12) },
+        });
+      }
+    }
     return true;
+  }
+
+  /** The name to save the destination under, when the human ticked the box and may. */
+  #saveRequest(request: SecretRequest, body: Buffer): string | undefined {
+    if (this.config.customDestinations !== 'save') return undefined;
+    if (request.snapshot.target.adapterId !== CUSTOM_ADAPTER_ID) return undefined;
+    if (formValue(body, 'save').toString('utf8') !== '1') return undefined;
+    const name = formValue(body, 'save_as').toString('utf8').trim();
+    if (!SAVED_NAME.test(name)) {
+      throw lockboxError(
+        ErrorCode.INVALID_ARGUMENTS,
+        'Saved destination names use lowercase letters, digits and dashes (up to 40).',
+      );
+    }
+    return name;
+  }
+
+  async #forget(request: SecretRequest): Promise<void> {
+    const name = request.snapshot.target.fields.saved_name;
+    if (!name) throw lockboxError(ErrorCode.INVALID_STATE, 'This destination is not saved.');
+    await SavedDestinations.for(this.config).remove(name);
+    this.log.event('custom_destination_forgotten', {
+      request_id: request.requestId,
+      component: 'ui',
+      detail: { name },
+    });
   }
 
   #cancel(request: SecretRequest): void {
@@ -503,7 +548,7 @@ export class SecureInputUI {
   }
 }
 
-const SESSION_COOKIE = 'veil_session';
+const SESSION_COOKIE = 'lockbox_session';
 
 /** Every value of one cookie in a `Cookie` header (one per matching path). */
 function cookieValues(header: string | undefined, name: string): string[] {

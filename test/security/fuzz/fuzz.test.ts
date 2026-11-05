@@ -3,9 +3,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { AdapterError } from '../../../src/adapters/base.js';
-import { EnvFileAdapter } from '../../../src/adapters/envFile.js';
+import { CustomDestinationAdapter } from '../../../src/adapters/custom.js';
 import { AdapterRegistry } from '../../../src/adapters/registry.js';
-import { VeilError } from '../../../src/errors.js';
+import { LockboxError } from '../../../src/errors.js';
 import { Environment } from '../../../src/model.js';
 import { safeDisplay } from '../../../src/redaction.js';
 import { RecordingAdapter } from '../../support/fakes.js';
@@ -73,7 +73,7 @@ describe('fuzzed metadata', () => {
 
       const body = (await harness.get(harness.pathFor(payload))).body;
       const lowered = body.toLowerCase();
-      // Only Veil's own nonce'd script, never one carried in by metadata.
+      // Only Lockbox's own nonce'd script, never one carried in by metadata.
       expect(lowered.split('<script').length - 1).toBe(1);
       expect(lowered).not.toContain('<img');
       if (hostile.includes('<')) expect(body).toContain('&lt;');
@@ -126,8 +126,8 @@ describe('fuzzed metadata', () => {
     }
   });
 
-  it('rejects traversal and hostile paths in the env adapter', async () => {
-    const adapter = new EnvFileAdapter(harness.config);
+  it('rejects traversal and hostile paths in file destinations', async () => {
+    const adapter = new CustomDestinationAdapter(harness.config);
     for (const path of [
       '../../etc/profile',
       '../outside.env',
@@ -136,7 +136,18 @@ describe('fuzzed metadata', () => {
       'sub/../../escape.env',
     ]) {
       await expect(
-        adapter.normalizeTarget({ path }, { name: 'TOKEN', environmentHint: Environment.UNKNOWN }),
+        adapter.normalizeTarget(
+          {
+            definition: {
+              kind: 'file',
+              label: 'Hostile path',
+              path,
+              template: 'TOKEN={{secret}}',
+              mode: 'env',
+            },
+          },
+          { name: 'TOKEN', environmentHint: Environment.UNKNOWN },
+        ),
       ).rejects.toBeInstanceOf(AdapterError);
     }
   });
@@ -179,7 +190,7 @@ describe('fuzzed metadata', () => {
 
   it('rejects non-string request ids', () => {
     for (const bad of [null, 42, [], {}, 'req_does_not_exist']) {
-      expect(() => harness.broker.publicStatus(bad)).toThrow(VeilError);
+      expect(() => harness.broker.publicStatus(bad)).toThrow(LockboxError);
     }
   });
 });

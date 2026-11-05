@@ -1,7 +1,7 @@
-# Veil — Implementation Plan
+# Lockbox — Implementation Plan
 
 > **Status:** delivered. Originally executed in Python; the implementation was later ported
-> to TypeScript so the server installs the way MCP clients expect (`npx -y veil-mcp`). The
+> to TypeScript so the server installs the way MCP clients expect (`npx -y lockbox-mcp`). The
 > slices and invariants below still describe the shipped design — only the runtime table
 > changed.
 
@@ -13,7 +13,7 @@ ends with runnable tests.
 
 | Decision | Rationale | Spec |
 | --- | --- | --- |
-| TypeScript on Node 20+, ESM, published to npm as `veil-mcp` | `npx -y <server>` is how MCP clients install a server; the spec's Python interface maps one-to-one onto the TypeScript classes | §15, §37 |
+| TypeScript on Node 20+, ESM, published to npm as `lockbox-mcp` | `npx -y <server>` is how MCP clients install a server; the spec's Python interface maps one-to-one onto the TypeScript classes | §15, §37 |
 | **One runtime dependency** (`zod`), plus optional `google-auth-library` | The broker is the trusted computing base; every dependency inside it is a supply-chain path to the credential. The official MCP SDK would add ~90 packages including Express, Hono and an OAuth stack | §42, §43 |
 | Google destinations use the REST APIs plus lazily-imported ADC, not the full client libraries | Keeps the TCB small for users who only need `.env`; still no shell wrappers, and the credential travels in a request body | §42, SEC-008/009 |
 | Adapter methods are `async` (as specified); the broker needs no locks because Node is single-threaded, and every check-then-act on request state runs without an intervening `await` | Matches §15 while removing a whole class of race conditions | §15 |

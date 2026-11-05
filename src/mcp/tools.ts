@@ -14,15 +14,27 @@
  *
  * Why not elicitation? The spec-native way to collect user input mid-tool would
  * deliver the value back through the MCP protocol and into the model's context —
- * exactly what Veil exists to prevent (SPEC.md §5). The out-of-band browser
+ * exactly what Lockbox exists to prevent (SPEC.md §5). The out-of-band browser
  * window is not a workaround for missing elicitation support; it is the point.
  */
 
 import { z } from 'zod';
 
-import type { AdapterRegistry } from '../adapters/registry.js';
+import {
+  CUSTOM_ADAPTER_ID,
+  SAVED_DESTINATION,
+  type AdapterRegistry,
+} from '../adapters/registry.js';
 import { parseStoreParams, type SecretBroker } from '../broker.js';
-import { ErrorCode, VeilError, publicError, publicErrorToJSON, veilError } from '../errors.js';
+import { CUSTOM_DEFINITION_EXAMPLES } from '../custom/examples.js';
+import { SavedDestinations } from '../custom/store.js';
+import {
+  ErrorCode,
+  LockboxError,
+  publicError,
+  publicErrorToJSON,
+  lockboxError,
+} from '../errors.js';
 import type { AuditLogger } from '../logging.js';
 import { Environment, WriteMode } from '../model.js';
 import { looksLikeCredential, safeDisplay } from '../redaction.js';
@@ -41,6 +53,8 @@ export const SECRET_SHAPED_FIELD =
   /(secret[_-]?value|secretvalue|raw[_-]?secret|rawsecret|password|passwd|pwd|passphrase|credential|credentials|api[_-]?key[_-]?value|token[_-]?value|private[_-]?key|client[_-]?secret|access[_-]?key|content|payload|value|data|blob|bytes|material)/i;
 
 export const MAX_ARGUMENT_DEPTH = 6;
+/** A custom definition's JSON body may nest deeper than any flat target. */
+export const MAX_DEFINITION_DEPTH = 16;
 /**
  * A blocking status call occupies the single-threaded stdio loop, so it is kept
  * short: the human's window runs independently and is never blocked by it.
@@ -112,10 +126,10 @@ export class ToolRouter {
         title: 'Request credential storage',
         description:
           'Creates a request to store a credential at the described destination and opens ' +
-          "Veil's own authorization window on the user's machine, where the user reviews " +
+          "Lockbox's own authorization window on the user's machine, where the user reviews " +
           'the destination and types the value. Returns a request id, the normalized ' +
           'destination, a risk classification and the request state — never the credential ' +
-          'value, which no Veil tool accepts or returns. Does not write anything by itself: ' +
+          'value, which no Lockbox tool accepts or returns. Does not write anything by itself: ' +
           'the write happens only after the user authorizes it. Use secret_status to follow ' +
           'the request, and secret_revise to change an already-authorized destination.',
         inputSchema: this.storeSchema(),
@@ -215,7 +229,7 @@ export class ToolRouter {
         name: DESTINATIONS_TOOL,
         title: 'List credential destinations',
         description:
-          'Lists the destinations this Veil instance can write to, with the target fields ' +
+          'Lists the destinations this Lockbox instance can write to, with the target fields ' +
           'and write modes each one accepts. Reads only; creates no request.',
         inputSchema: { type: 'object', additionalProperties: false, properties: {} },
         annotations: {
@@ -243,8 +257,15 @@ export class ToolRouter {
       properties: {
         destination: {
           type: 'string',
-          enum: [...this.registry.ids()],
-          description: 'Destination adapter that will receive the credential.',
+          anyOf: [
+            { enum: [...this.registry.ids()] },
+            ...(this.registry.has(CUSTOM_ADAPTER_ID)
+              ? [{ pattern: SAVED_DESTINATION.source }]
+              : []),
+          ],
+          description:
+            "Destination that will receive the credential: 'custom' with target.definition, " +
+            "or 'saved:<name>' for one the user saved (target then empty).",
         },
         name: {
           type: 'string',
@@ -273,7 +294,7 @@ export class ToolRouter {
           type: 'string',
           enum: Object.values(Environment),
           description:
-            'Environment this destination is believed to belong to. Advisory only: Veil ' +
+            'Environment this destination is believed to belong to. Advisory only: Lockbox ' +
             'classifies the destination itself and applies the stricter of the two.',
         },
         description: {
@@ -311,7 +332,7 @@ export class ToolRouter {
           : (undefined as never);
 
     if (argumentObject === undefined) {
-      return errorResult(veilError(ErrorCode.INVALID_ARGUMENTS, 'Arguments must be an object.'));
+      return errorResult(lockboxError(ErrorCode.INVALID_ARGUMENTS, 'Arguments must be an object.'));
     }
 
     try {
@@ -326,12 +347,12 @@ export class ToolRouter {
         case REVISE_TOOL:
           return await this.#revise(argumentObject);
         case DESTINATIONS_TOOL:
-          return this.#destinations();
+          return await this.#destinations();
         default:
-          throw veilError(ErrorCode.INVALID_ARGUMENTS, 'Unknown tool.');
+          throw lockboxError(ErrorCode.INVALID_ARGUMENTS, 'Unknown tool.');
       }
     } catch (error) {
-      if (error instanceof VeilError) return errorResult(error);
+      if (error instanceof LockboxError) return errorResult(error);
       this.log.error('tool_call_failed', { tool: safeDisplay(String(name), 40) });
       return {
         payload: publicErrorToJSON(
@@ -346,21 +367,24 @@ export class ToolRouter {
   #screenArguments(tool: unknown, args: Record<string, unknown>): void {
     const findings: string[] = [];
 
-    const walk = (node: unknown, depth: number): void => {
-      if (depth > MAX_ARGUMENT_DEPTH) {
+    // Inside a custom destination's definition, keys are the destination's own
+    // vocabulary (`{"value": "{{secret}}"}` is the normal shape of an API body),
+    // so only values are screened there; the definition schema closes the rest.
+    const walk = (node: unknown, depth: number, inDefinition: boolean): void => {
+      if (depth > (inDefinition ? MAX_DEFINITION_DEPTH : MAX_ARGUMENT_DEPTH)) {
         findings.push('nesting');
         return;
       }
       if (Array.isArray(node)) {
-        for (const item of node) walk(item, depth + 1);
+        for (const item of node) walk(item, depth + 1, inDefinition);
         return;
       }
       if (node !== null && typeof node === 'object') {
         for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
-          if (!ALLOWED_ARGUMENT_KEYS.has(key) && SECRET_SHAPED_FIELD.test(key)) {
+          if (!inDefinition && !ALLOWED_ARGUMENT_KEYS.has(key) && SECRET_SHAPED_FIELD.test(key)) {
             findings.push(`field:${safeDisplay(key, 40)}`);
           }
-          walk(value, depth + 1);
+          walk(value, depth + 1, inDefinition || (depth === 1 && key === 'definition'));
         }
         return;
       }
@@ -369,16 +393,16 @@ export class ToolRouter {
       }
     };
 
-    walk(args, 0);
+    walk(args, 0, false);
     if (findings.length > 0) {
       this.log.security('secret_shaped_argument_rejected', {
         tool: safeDisplay(String(tool), 40),
         detail: { findings: [...new Set(findings)].slice(0, 5) },
       });
-      throw veilError(
+      throw lockboxError(
         ErrorCode.FORBIDDEN_FIELD,
         'This tool never accepts credential material. Remove the offending field and let ' +
-          'the user enter the value in Veil.',
+          'the user enter the value in Lockbox.',
       );
     }
   }
@@ -392,7 +416,7 @@ export class ToolRouter {
   async #revise(args: Record<string, unknown>): Promise<ToolResult> {
     const requestId = args.request_id;
     if (typeof requestId !== 'string') {
-      throw veilError(ErrorCode.INVALID_ARGUMENTS, 'A request_id is required.');
+      throw lockboxError(ErrorCode.INVALID_ARGUMENTS, 'A request_id is required.');
     }
     const rest = Object.fromEntries(Object.entries(args).filter(([key]) => key !== 'request_id'));
     const params = parseStoreParams(rest, this.registry);
@@ -407,7 +431,7 @@ export class ToolRouter {
   async #status(args: Record<string, unknown>): Promise<ToolResult> {
     const parsed = statusArgsSchema.safeParse(args);
     if (!parsed.success) {
-      throw veilError(ErrorCode.INVALID_ARGUMENTS, 'A request_id is required.');
+      throw lockboxError(ErrorCode.INVALID_ARGUMENTS, 'A request_id is required.');
     }
     const wait = parsed.data.wait_seconds ?? 0;
     if (wait > 0) {
@@ -422,7 +446,7 @@ export class ToolRouter {
   #cancel(args: Record<string, unknown>): ToolResult {
     const parsed = cancelArgsSchema.safeParse(args);
     if (!parsed.success) {
-      throw veilError(ErrorCode.INVALID_ARGUMENTS, 'A request_id is required.');
+      throw lockboxError(ErrorCode.INVALID_ARGUMENTS, 'A request_id is required.');
     }
     this.broker.cancel(parsed.data.request_id, {
       reason: parsed.data.reason ? safeDisplay(parsed.data.reason, 80) : 'agent_cancelled',
@@ -430,7 +454,8 @@ export class ToolRouter {
     return { payload: this.broker.publicStatus(parsed.data.request_id), isError: false };
   }
 
-  #destinations(): ToolResult {
+  async #destinations(): Promise<ToolResult> {
+    const saved = this.registry.has(CUSTOM_ADAPTER_ID) ? await this.#savedListing() : [];
     return {
       payload: {
         destinations: this.registry.list().map((adapter) => ({
@@ -439,13 +464,63 @@ export class ToolRouter {
           destination_class: adapter.destinationClass,
           write_modes: [...adapter.supportedWriteModes()],
           target_schema: adapter.targetSchema(),
+          ...(adapter.id === CUSTOM_ADAPTER_ID ? { ...this.#customContract(), saved } : {}),
         })),
         note:
-          'No destination accepts a credential value through this API. Veil collects the ' +
+          'No destination accepts a credential value through this API. Lockbox collects the ' +
           'value from the user directly.',
       },
       isError: false,
     };
+  }
+
+  /** How to write a definition, for an agent that has never seen one. */
+  #customContract(): Record<string, unknown> {
+    return {
+      kinds: [...this.registry.get(CUSTOM_ADAPTER_ID).config.customKinds],
+      rules: [
+        '{{secret}} appears exactly once: in an http body or header value, in command stdin, ' +
+          'or in a file template. Never in a URL or a command argument.',
+        '{{name}} is the credential name. No other placeholders and no shell expansions.',
+        'http: https only, POST/PUT/PATCH, no redirects; the result is the status and an ' +
+          'optional reference read from the response by a path such as $.data.id.',
+        'command: absolute executable path, fixed arguments, no shell.',
+        'The user sees the destination, approves it and types its name before anything is sent.',
+      ],
+      examples: CUSTOM_DEFINITION_EXAMPLES,
+    };
+  }
+
+  /**
+   * REQ-016: saved destinations by name, kind and where they point — never
+   * their headers, arguments or templates.
+   */
+  async #savedListing(): Promise<Record<string, unknown>[]> {
+    const config = this.registry.get(CUSTOM_ADAPTER_ID).config;
+    const entries = await SavedDestinations.for(config).list();
+    return entries.map((entry) => {
+      const definition = entry.definition as Record<string, unknown>;
+      let target = '';
+      if (definition.kind === 'http' && typeof definition.url === 'string') {
+        try {
+          target = `https://${new URL(definition.url).host}`;
+        } catch {
+          target = '';
+        }
+      } else if (definition.kind === 'command' && typeof definition.executable === 'string') {
+        target = definition.executable;
+      } else if (definition.kind === 'file' && typeof definition.path === 'string') {
+        target = definition.path;
+      }
+      return {
+        destination: `saved:${entry.name}`,
+        kind: safeDisplay(typeof definition.kind === 'string' ? definition.kind : '', 16),
+        target: safeDisplay(target, 256),
+        hash_prefix: entry.hash.slice(0, 12),
+        approved_at: safeDisplay(entry.approvedAt, 40),
+        ...(entry.intact ? {} : { status: 'changed since saved; will be reviewed again' }),
+      };
+    });
   }
 
   #pendingPayload(requestId: string): Record<string, unknown> {
@@ -453,6 +528,6 @@ export class ToolRouter {
   }
 }
 
-function errorResult(error: VeilError): ToolResult {
+function errorResult(error: LockboxError): ToolResult {
   return { payload: publicErrorToJSON(error.public), isError: true };
 }

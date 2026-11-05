@@ -1,13 +1,13 @@
 {
-  "name": "veil-mcp",
+  "name": "lockbox-mcp",
   "version": "0.1.0",
   "description": "An MCP server and secure input broker: an AI agent can place a credential without ever receiving it, while a trusted human-controlled UI authorizes where it goes.",
   "license": "Apache-2.0",
   "author": "Eduardo Rosostolato",
   "type": "module",
   "bin": {
-    "veil-mcp": "dist/index.js",
-    "veil": "dist/index.js"
+    "lockbox-mcp": "dist/index.js",
+    "lockbox": "dist/index.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -22,11 +22,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rosostolato/veil-mcp.git"
+    "url": "git+https://github.com/rosostolato/lockbox-mcp.git"
   },
-  "homepage": "https://github.com/rosostolato/veil-mcp#readme",
+  "homepage": "https://github.com/rosostolato/lockbox-mcp#readme",
   "bugs": {
-    "url": "https://github.com/rosostolato/veil-mcp/issues"
+    "url": "https://github.com/rosostolato/lockbox-mcp/issues"
   },
   "keywords": [
     "mcp",
@@ -50,9 +50,6 @@
   "dependencies": {
     "zod": "^4.6.6"
   },
-  "optionalDependencies": {
-    "google-auth-library": "^10.0.0 || ^11.0.0"
-  },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "eslint": "^9.17.0",
@@ -60,5 +57,10 @@
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.0",
     "vitest": "^4.1.12"
+  },
+  "overrides": {
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.4"
+    }
   }
 }

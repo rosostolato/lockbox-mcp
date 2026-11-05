@@ -9,7 +9,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { EnvFileAdapter } from '../../src/adapters/envFile.js';
+import { CustomDestinationAdapter } from '../../src/adapters/custom.js';
 import { AdapterRegistry } from '../../src/adapters/registry.js';
 import { SecretBroker, parseStoreParams } from '../../src/broker.js';
 import { ErrorCode } from '../../src/errors.js';
@@ -21,19 +21,42 @@ import { DeferredAdapter, DiscardStream } from '../support/fakes.js';
 import { Harness, testConfig } from '../support/harness.js';
 import { makeTempDir, removeTempDir } from '../support/tmp.js';
 
+/** A custom `file` destination that sets one variable in a .env file. */
+function envTarget(path: string): Record<string, unknown> {
+  return {
+    definition: {
+      kind: 'file',
+      label: 'Project .env',
+      path,
+      template: '{{name}}={{secret}}',
+      mode: 'env',
+    },
+  };
+}
+
+/** `secret_store` arguments for that destination. */
+function envStore(path: string): Record<string, unknown> {
+  return {
+    destination: 'custom',
+    name: 'API_TOKEN',
+    target: envTarget(path),
+    environment: 'development',
+  };
+}
+
 describe('a symlinked directory cannot escape the allowed roots', () => {
   it('rejects a path whose parent is a symlink pointing outside', async () => {
     const root = makeTempDir();
-    const outside = makeTempDir('veil-outside-');
+    const outside = makeTempDir('lockbox-outside-');
     try {
       symlinkSync(outside, join(root, 'escape'));
-      const adapter = new EnvFileAdapter(testConfig({ envAllowedRoots: [root] }));
+      const adapter = new CustomDestinationAdapter(testConfig({ envAllowedRoots: [root] }));
 
       await expect(
-        adapter.normalizeTarget(
-          { path: 'escape/.env' },
-          { name: 'TOKEN', environmentHint: Environment.DEVELOPMENT },
-        ),
+        adapter.normalizeTarget(envTarget('escape/.env'), {
+          name: 'TOKEN',
+          environmentHint: Environment.DEVELOPMENT,
+        }),
       ).rejects.toMatchObject({ public: { code: ErrorCode.DESTINATION_NOT_PERMITTED } });
     } finally {
       removeTempDir(root);
@@ -43,17 +66,17 @@ describe('a symlinked directory cannot escape the allowed roots', () => {
 
   it('rejects a deeper symlinked ancestor', async () => {
     const root = makeTempDir();
-    const outside = makeTempDir('veil-outside-');
+    const outside = makeTempDir('lockbox-outside-');
     try {
       mkdirSync(join(root, 'nested'));
       symlinkSync(outside, join(root, 'nested', 'escape'));
-      const adapter = new EnvFileAdapter(testConfig({ envAllowedRoots: [root] }));
+      const adapter = new CustomDestinationAdapter(testConfig({ envAllowedRoots: [root] }));
 
       await expect(
-        adapter.normalizeTarget(
-          { path: 'nested/escape/config/.env' },
-          { name: 'TOKEN', environmentHint: Environment.DEVELOPMENT },
-        ),
+        adapter.normalizeTarget(envTarget('nested/escape/config/.env'), {
+          name: 'TOKEN',
+          environmentHint: Environment.DEVELOPMENT,
+        }),
       ).rejects.toMatchObject({ public: { code: ErrorCode.DESTINATION_NOT_PERMITTED } });
     } finally {
       removeTempDir(root);
@@ -66,12 +89,12 @@ describe('a symlinked directory cannot escape the allowed roots', () => {
     try {
       mkdirSync(join(root, 'real'));
       symlinkSync(join(root, 'real'), join(root, 'alias'));
-      const adapter = new EnvFileAdapter(testConfig({ envAllowedRoots: [root] }));
+      const adapter = new CustomDestinationAdapter(testConfig({ envAllowedRoots: [root] }));
 
-      const target = await adapter.normalizeTarget(
-        { path: 'alias/.env' },
-        { name: 'TOKEN', environmentHint: Environment.DEVELOPMENT },
-      );
+      const target = await adapter.normalizeTarget(envTarget('alias/.env'), {
+        name: 'TOKEN',
+        environmentHint: Environment.DEVELOPMENT,
+      });
       // The link stays inside the root, so it is allowed — but the path shown
       // is the one that will actually be written.
       expect(target.fields.path).toBe(join(realpathSync(join(root, 'real')), '.env'));
@@ -85,23 +108,17 @@ describe('a symlinked directory cannot escape the allowed roots', () => {
     // macOS /tmp is itself a symlink to /private/tmp: a root that is not
     // canonicalised would reject every legitimate write under it.
     const real = makeTempDir();
-    const linkedRoot = join(makeTempDir('veil-link-'), 'root');
+    const linkedRoot = join(makeTempDir('lockbox-link-'), 'root');
     try {
       symlinkSync(real, linkedRoot);
       const config = testConfig({ envAllowedRoots: [linkedRoot] });
       const harness = await Harness.start(
         config,
-        new AdapterRegistry([new EnvFileAdapter(config)]),
+        new AdapterRegistry([new CustomDestinationAdapter(config)]),
       );
       const canary = Canary.create();
       try {
-        const payload = await harness.callTool('secret_store', {
-          destination: 'env-file',
-          name: 'API_TOKEN',
-          target: { path: '.env' },
-          write_mode: 'create',
-          environment: 'development',
-        });
+        const payload = await harness.callTool('secret_store', envStore('.env'));
         const status = await harness.finishFlow(payload, canary.value);
         expect(status.state).toBe('STORED');
         expect(readFileSync(join(real, '.env'), 'utf8')).toContain(canary.value);
@@ -115,15 +132,15 @@ describe('a symlinked directory cannot escape the allowed roots', () => {
 
   it('refuses a parent directory swapped for a symlink after authorization', async () => {
     const root = makeTempDir();
-    const outside = makeTempDir('veil-outside-');
+    const outside = makeTempDir('lockbox-outside-');
     try {
       mkdirSync(join(root, 'conf'));
       const config = testConfig({ envAllowedRoots: [root] });
-      const adapter = new EnvFileAdapter(config);
-      const target = await adapter.normalizeTarget(
-        { path: 'conf/.env' },
-        { name: 'TOKEN', environmentHint: Environment.DEVELOPMENT },
-      );
+      const adapter = new CustomDestinationAdapter(config);
+      const target = await adapter.normalizeTarget(envTarget('conf/.env'), {
+        name: 'TOKEN',
+        environmentHint: Environment.DEVELOPMENT,
+      });
 
       // Between authorization and the write, the directory becomes a link out.
       removeTempDir(join(root, 'conf'));
@@ -131,7 +148,7 @@ describe('a symlinked directory cannot escape the allowed roots', () => {
 
       const { SecretBuffer } = await import('../../src/secretBuffer.js');
       const buffer = new SecretBuffer(Buffer.from('value', 'utf8'));
-      await expect(adapter.store(buffer, target, 'create')).rejects.toMatchObject({
+      await expect(adapter.store(buffer, target)).rejects.toMatchObject({
         public: { code: ErrorCode.DESTINATION_NOT_PERMITTED },
       });
       buffer.zeroize();
@@ -227,9 +244,12 @@ describe('display sanitization', () => {
 });
 
 describe('the browser opener', () => {
-  it('refuses to hand anything but a Veil authorization URL to a command line', async () => {
+  it('refuses to hand anything but a Lockbox authorization URL to a command line', async () => {
     const config = testConfig({ openBrowser: true });
-    const harness = await Harness.start(config, new AdapterRegistry([new EnvFileAdapter(config)]));
+    const harness = await Harness.start(
+      config,
+      new AdapterRegistry([new CustomDestinationAdapter(config)]),
+    );
     try {
       // Nothing reaches an argv on the strength of where it came from.
       harness.ui.present('req_test', 'http://evil.example/r/a/b');
@@ -252,7 +272,7 @@ describe('the browser opener', () => {
 describe('configured roots', () => {
   it('canonicalises roots so a symlinked root still works', () => {
     const real = makeTempDir();
-    const linkDirectory = makeTempDir('veil-link-');
+    const linkDirectory = makeTempDir('lockbox-link-');
     try {
       const link = join(linkDirectory, 'root');
       symlinkSync(real, link);
@@ -267,18 +287,15 @@ describe('configured roots', () => {
 
 describe('oversized request bodies', () => {
   it('answers 413 even when the client hides the size with chunked encoding', async () => {
-    const config = testConfig();
-    const harness = await Harness.start(config, new AdapterRegistry([new EnvFileAdapter(config)]));
+    const root = makeTempDir();
+    const config = testConfig({ envAllowedRoots: [root] });
+    const harness = await Harness.start(
+      config,
+      new AdapterRegistry([new CustomDestinationAdapter(config)]),
+    );
     try {
-      const root = makeTempDir();
       writeFileSync(join(root, '.env'), '');
-      const payload = await harness.callTool('secret_store', {
-        destination: 'env-file',
-        name: 'API_TOKEN',
-        target: { path: '.env' },
-        write_mode: 'create',
-        environment: 'development',
-      });
+      const payload = await harness.callTool('secret_store', envStore('.env'));
 
       const opened = await fetch(`${harness.ui.baseUrl ?? ''}${harness.pathFor(payload)}`, {
         redirect: 'manual',

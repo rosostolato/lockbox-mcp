@@ -2,14 +2,12 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { GcpSecretManagerAdapter } from '../../../src/adapters/gcpSecretManager.js';
 import { AdapterRegistry } from '../../../src/adapters/registry.js';
 import type { SecretDestinationAdapter } from '../../../src/adapters/base.js';
 import { Canary } from '../../support/canary.js';
 import {
   EchoingErrorAdapter,
   EchoingSanitizerAdapter,
-  FakeSecretManager,
   LeakyResultAdapter,
   MalformedResultAdapter,
   RaisingSanitizerAdapter,
@@ -86,37 +84,5 @@ describe('provider error sanitization', () => {
       { adapterTimeoutSeconds: 1 },
     );
   });
-
-  const statuses: [number, string][] = [
-    [401, 'DESTINATION_DENIED'],
-    [403, 'DESTINATION_DENIED'],
-    [404, 'DESTINATION_NOT_FOUND'],
-    [409, 'DESTINATION_CONFLICT'],
-    [429, 'DESTINATION_RATE_LIMITED'],
-    [500, 'DESTINATION_WRITE_FAILED'],
-    [503, 'DESTINATION_UNAVAILABLE'],
-  ];
-
-  for (const [status, expectedCode] of statuses) {
-    it(`maps provider status ${status} to ${expectedCode}`, async () => {
-      const provider = new FakeSecretManager();
-      provider.existing.add('projects/acme-dev-project/secrets/API_TOKEN');
-      provider.failStatus = status;
-
-      await withHarness(
-        (config) => new GcpSecretManagerAdapter(config, provider.transport()),
-        async (harness, canary) => {
-          const payload = await harness.callTool('secret_store', {
-            ...args('gcp-secret-manager'),
-            write_mode: 'new-version',
-          });
-          const result = await harness.finishFlow(payload, canary.value);
-          expect(result.state).toBe('FAILED');
-          expect((result.error as { code: string }).code).toBe(expectedCode);
-          harness.collectLogs();
-          harness.scanner.assertClean(canary);
-        },
-      );
-    });
-  }
+  // Provider status codes are mapped by the http executor: test/custom/http.test.ts.
 });

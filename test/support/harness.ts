@@ -5,9 +5,13 @@
  * test can end with `harness.scanner.assertClean(canary)`.
  */
 
+import { randomBytes } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { AdapterRegistry } from '../../src/adapters/registry.js';
 import { SecretBroker } from '../../src/broker.js';
-import { defaultConfig, type VeilConfig } from '../../src/config.js';
+import { defaultConfig, type LockboxConfig } from '../../src/config.js';
 import { AuditLogger } from '../../src/logging.js';
 import { MCPServer, type JsonRpcResponse } from '../../src/mcp/server.js';
 import { SecureInputUI } from '../../src/ui/server.js';
@@ -26,7 +30,7 @@ export interface HttpResult {
  * `test/security/authorization/out-of-band.test.ts` covers the production
  * default, where the agent never sees it.
  */
-export function testConfig(overrides: Partial<VeilConfig> = {}): VeilConfig {
+export function testConfig(overrides: Partial<LockboxConfig> = {}): LockboxConfig {
   return defaultConfig({
     requestTtlSeconds: 60,
     adapterTimeoutSeconds: 5,
@@ -34,6 +38,12 @@ export function testConfig(overrides: Partial<VeilConfig> = {}): VeilConfig {
     uiPort: 0,
     openBrowser: false,
     discloseAuthorizationUrl: true,
+    // Never the user's real saved destinations.
+    customStorePath: join(
+      tmpdir(),
+      `lockbox-test-store-${process.pid}-${randomBytes(6).toString('hex')}`,
+      'destinations.json',
+    ),
     ...overrides,
   });
 }
@@ -48,7 +58,7 @@ export class Harness {
   #nextId = 0;
 
   private constructor(
-    readonly config: VeilConfig,
+    readonly config: LockboxConfig,
     readonly registry: AdapterRegistry,
   ) {
     const logger = new AuditLogger({
@@ -65,7 +75,7 @@ export class Harness {
     this.server = new MCPServer(this.broker, registry, { logger });
   }
 
-  static async start(config: VeilConfig, registry: AdapterRegistry): Promise<Harness> {
+  static async start(config: LockboxConfig, registry: AdapterRegistry): Promise<Harness> {
     const harness = new Harness(config, registry);
     await harness.ui.start();
     return harness;
@@ -103,7 +113,7 @@ export class Harness {
   // -- HTTP -------------------------------------------------------------------
 
   /**
-   * Behaves like the one browser Veil opened: the first GET of a link trades it
+   * Behaves like the one browser Lockbox opened: the first GET of a link trades it
    * for a session cookie and follows the redirect; later GETs of the same link
    * go straight to the request page, and POSTs to `<link>/<action>` are sent to
    * `/r/<id>/<action>` with the cookie. `{ browser: false }` sends the request
@@ -157,13 +167,13 @@ export class Harness {
       ...(init.headers as Record<string, string> | undefined),
     };
     const session = requestId ? this.#sessions.get(requestId) : undefined;
-    if (browser && session) headers.cookie = `veil_session=${session}`;
+    if (browser && session) headers.cookie = `lockbox_session=${session}`;
     const response = await fetch(`${this.ui.baseUrl ?? ''}${path}`, {
       ...init,
       redirect: 'manual',
       headers,
     });
-    const cookie = /veil_session=([^;]+)/.exec(response.headers.get('set-cookie') ?? '')?.[1];
+    const cookie = /lockbox_session=([^;]+)/.exec(response.headers.get('set-cookie') ?? '')?.[1];
     if (browser && cookie && requestId) this.#sessions.set(requestId, cookie);
     const text = await response.text();
     if (response.status !== 303) this.scanner.add('ui_html', text);

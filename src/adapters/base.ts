@@ -12,7 +12,7 @@
  *   no provider text.
  */
 
-import type { VeilConfig } from '../config.js';
+import type { LockboxConfig } from '../config.js';
 import { ErrorCode, publicError, type PublicError } from '../errors.js';
 import {
   Environment,
@@ -70,7 +70,7 @@ export abstract class SecretDestinationAdapter {
   /** Floor for risk assessment; policy may escalate above it, never below. */
   readonly riskClass: RiskLevel = RiskLevel.LOW;
 
-  constructor(readonly config: VeilConfig) {}
+  constructor(readonly config: LockboxConfig) {}
 
   /**
    * JSON Schema for this adapter's `target` object. Must be closed

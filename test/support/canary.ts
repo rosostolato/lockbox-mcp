@@ -38,11 +38,11 @@ export class Canary {
    *
    * - both ends are random and carry an uppercase letter, so a fragment cannot
    *   collide with the lowercase hex of a sha256 digest or with another canary;
-   * - the `VEIL_CANARY_` marker sits where the product's own credential-shape
+   * - the `LOCKBOX_CANARY_` marker sits where the product's own credential-shape
    *   screen still recognises the value as credential material.
    */
   static create(label = ''): Canary {
-    return new Canary(`Q${chunk(7)}VEIL_CANARY_${label}${chunk(10)}Z`);
+    return new Canary(`Q${chunk(7)}LOCKBOX_CANARY_${label}${chunk(10)}Z`);
   }
 
   get raw(): Buffer {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Veil entry point: `veil-mcp serve` runs the MCP server and the secure UI.
+ * Lockbox entry point: `lockbox-mcp serve` runs the MCP server and the secure UI.
  *
  * Two process-level protections are set up here:
  *
@@ -16,9 +16,9 @@ import { fileURLToPath } from 'node:url';
 
 import { defaultRegistry } from './adapters/registry.js';
 import { SecretBroker } from './broker.js';
-import { configFromEnv, type VeilConfig } from './config.js';
+import { configFromEnv, type LockboxConfig } from './config.js';
 import { AuditLogger, installCrashHandler } from './logging.js';
-import { MCPServer, VEIL_VERSION } from './mcp/server.js';
+import { MCPServer, LOCKBOX_VERSION } from './mcp/server.js';
 import { SecureInputUI } from './ui/server.js';
 
 const SWEEP_INTERVAL_MS = 5_000;
@@ -47,17 +47,17 @@ export function reserveStdout(): { write(chunk: string): boolean } {
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
   if (argv.includes('--version') || argv.includes('-v')) {
-    process.stderr.write(`veil ${VEIL_VERSION}\n`);
+    process.stderr.write(`lockbox ${LOCKBOX_VERSION}\n`);
     return 0;
   }
   if (argv.includes('--help') || argv.includes('-h')) {
     process.stderr.write(
       [
-        'veil-mcp — secure credential input broker (MCP stdio server)',
+        'lockbox-mcp — secure credential input broker (MCP stdio server)',
         '',
-        'Usage: veil-mcp [serve]',
+        'Usage: lockbox-mcp [serve]',
         '',
-        'Veil is started by an MCP client. See the README for client configuration.',
+        'Lockbox is started by an MCP client. See the README for client configuration.',
         '',
       ].join('\n'),
     );
@@ -72,7 +72,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   return serve(configFromEnv());
 }
 
-export async function serve(config: VeilConfig): Promise<number> {
+export async function serve(config: LockboxConfig): Promise<number> {
   const logger = new AuditLogger({ stream: process.stderr });
   const registry = await defaultRegistry(config);
   const broker = new SecretBroker(config, registry, { logger });
@@ -103,7 +103,7 @@ export async function serve(config: VeilConfig): Promise<number> {
   logger.event('server_started', {
     component: 'mcp',
     detail: {
-      version: VEIL_VERSION,
+      version: LOCKBOX_VERSION,
       adapters: [...registry.ids()],
       ui: ui.baseUrl ?? '',
       identity: ui.identity,

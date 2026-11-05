@@ -126,7 +126,7 @@ describe('secure UI', () => {
     const payload = await harness.callTool('secret_store', storeArgs());
     const opened = await harness.get(harness.pathFor(payload), { browser: false });
     const cookie = (opened.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
-    expect(cookie).toMatch(/^veil_session=/);
+    expect(cookie).toMatch(/^lockbox_session=/);
     const cancel = (headers: Record<string, string>): Promise<Response> =>
       fetch(`${harness.ui.baseUrl ?? ''}/r/${payload.request_id as string}/cancel`, {
         method: 'POST',
@@ -146,7 +146,7 @@ describe('secure UI', () => {
       'AWAITING_SECRET_AUTHORIZATION',
     );
 
-    // The same cookie from Veil's own page goes through: the refusals above
+    // The same cookie from Lockbox's own page goes through: the refusals above
     // were the origin check, not a missing session. This is the exact shape a
     // browser sends under `Referrer-Policy: no-referrer`: `Origin: null`.
     expect((await cancel({ origin: 'null', 'sec-fetch-site': 'same-origin' })).status).toBe(303);
@@ -284,7 +284,7 @@ describe('secure UI', () => {
     const { status, body } = await rawRequest(
       harness.ui.baseUrl ?? '',
       harness.pathFor(payload),
-      'veil.attacker.example',
+      'lockbox.attacker.example',
     );
 
     expect(status).toBe(400);
@@ -296,7 +296,7 @@ describe('secure UI', () => {
     expect(isLoopbackHost('127.0.0.1:8080')).toBe(true);
     expect(isLoopbackHost('localhost:3000')).toBe(true);
     expect(isLoopbackHost('[::1]:9000')).toBe(true);
-    expect(isLoopbackHost('veil.attacker.example')).toBe(false);
+    expect(isLoopbackHost('lockbox.attacker.example')).toBe(false);
     expect(isLoopbackHost('127.0.0.1.attacker.example')).toBe(false);
     expect(isLoopbackHost('127.0.0.1:notaport')).toBe(false);
     expect(isLoopbackHost('')).toBe(false);

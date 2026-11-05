@@ -5,7 +5,7 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-export function makeTempDir(prefix = 'veil-test-'): string {
+export function makeTempDir(prefix = 'lockbox-test-'): string {
   // realpath so macOS's /var -> /private/var symlink cannot make an allowed
   // root look like an escape.
   return realpathSync(mkdtempSync(join(tmpdir(), prefix)));

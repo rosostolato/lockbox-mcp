@@ -19,7 +19,7 @@ import { getLogger, type AuditLogger } from '../logging.js';
 import { safeDisplay } from '../redaction.js';
 import { ToolRouter, toolResultToMcp } from './tools.js';
 
-export const VEIL_VERSION = '0.1.0';
+export const LOCKBOX_VERSION = '0.1.0';
 export const PROTOCOL_VERSION = '2025-06-18';
 export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'] as const;
 export const MAX_FRAME_BYTES = 1 << 20;
@@ -30,13 +30,13 @@ export const METHOD_NOT_FOUND = -32601;
 export const INTERNAL_ERROR = -32603;
 
 export const INSTRUCTIONS = [
-  'Veil stores credentials without revealing them to you.',
+  'Lockbox stores credentials without revealing them to you.',
   '',
-  'You describe where a credential should go; the user types the value into Veil’s own',
-  'window and authorizes the destination there. No Veil tool accepts or returns a',
+  'You describe where a credential should go; the user types the value into Lockbox’s own',
+  'window and authorizes the destination there. No Lockbox tool accepts or returns a',
   'credential value.',
   '',
-  'Typical flow: call secret_store, tell the user Veil has opened its window, then poll',
+  'Typical flow: call secret_store, tell the user Lockbox has opened its window, then poll',
   'secret_status. An authorized operation cannot be edited — secret_revise invalidates the',
   'old authorization and asks the user again.',
 ].join('\n');
@@ -113,7 +113,7 @@ export class MCPServer {
     return {
       protocolVersion: version,
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: 'veil', version: VEIL_VERSION },
+      serverInfo: { name: 'lockbox', version: LOCKBOX_VERSION },
       instructions: INSTRUCTIONS,
     };
   }

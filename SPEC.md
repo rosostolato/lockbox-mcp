@@ -673,9 +673,26 @@ unknown remote endpoint
 
 This class MUST be disabled by default.
 
+> **Amended (custom destinations).** Lockbox no longer has built-in adapters: every destination
+> is a definition the agent writes and the human approves as rendered
+> ([`docs/specs/custom-destinations`](docs/specs/custom-destinations/requirements.md)).
+> `arbitrary-network` is therefore available by default, and only through that path, under
+> stricter conditions than the rule above protected: every such destination is high risk,
+> always requires Stage B with the host typed by the human, shows the full request before
+> the value is entered, refuses private and metadata addresses and redirects, and can be
+> narrowed by the operator (`LOCKBOX_CUSTOM_KINDS`, `LOCKBOX_CUSTOM_HTTP_HOSTS`). The registry
+> still refuses any other adapter of this class.
+
 ---
 
 # 17. Initial Adapters
+
+> **Superseded.** The built-in Google Secret Manager, `.env` and Firestore adapters were
+> replaced by custom destinations of three kinds — `file`, `command` and `http` — described
+> in [`docs/specs/custom-destinations`](docs/specs/custom-destinations/design.md). `.env` is a
+> `file` definition in `env` mode; Google Secret Manager is a `command` definition running
+> `gcloud … --data-file=-`; Firestore has no recipe yet. The original list is kept below for
+> history.
 
 MVP SHOULD support:
 

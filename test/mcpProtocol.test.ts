@@ -182,10 +182,10 @@ describe('the packaged server', () => {
           timeout: 60_000,
           env: {
             ...process.env,
-            VEIL_UI_PORT: '0',
-            VEIL_OPEN_BROWSER: 'false',
-            VEIL_ENV_ALLOWED_ROOTS: workdir,
-            VEIL_ENABLED_ADAPTERS: 'env-file',
+            LOCKBOX_UI_PORT: '0',
+            LOCKBOX_OPEN_BROWSER: 'false',
+            LOCKBOX_ENV_ALLOWED_ROOTS: workdir,
+            LOCKBOX_ENABLED_ADAPTERS: 'custom',
           },
         },
       );
@@ -199,7 +199,7 @@ describe('the packaged server', () => {
       const first = JSON.parse(stdoutLines[0] ?? '{}') as {
         result?: { serverInfo?: { name?: string } };
       };
-      expect(first.result?.serverInfo?.name).toBe('veil');
+      expect(first.result?.serverInfo?.name).toBe('lockbox');
       expect((result.stderr ?? Buffer.alloc(0)).toString('utf8')).toContain(
         'this should never reach stdout',
       );

@@ -1,7 +1,7 @@
-# Veil security model and spec traceability
+# Lockbox security model and spec traceability
 
 This document maps each invariant in `SPEC.md` to the code that enforces it and the test
-that tries to break it. If you are reviewing Veil, this is the shortest path through it.
+that tries to break it. If you are reviewing Lockbox, this is the shortest path through it.
 
 ## The two guarantees
 
@@ -49,8 +49,8 @@ shell string, a global, a cache, or anything serialized.
 | SEC-004/005 no secret in stdout/stderr | fd reservation, structured logging | `mcpProtocol` › *SEC-004: reserves stdout for the protocol alone* |
 | SEC-006 no secret in logs, any level | `logging.AuditLogger` | `leakage` › *SEC-006* (both cases) |
 | SEC-007 no secret in URLs | POST body only; PRG redirect | `ui` › *keeps the credential out of the URL and redirects after POST* |
-| SEC-008/009 no secret in argv or shell | `envFile` git helper (paths only, no shell) and REST calls | `envAdapter` › *keeps the credential out of every spawned argv* |
-| SEC-010 no temporary copies | `envFile.atomicWrite` (0600, deterministic unlink) | `leakage` › *SEC-010*, `envAdapter` › *interrupted write* |
+| SEC-008/009 no secret in argv or shell | `localFile` git helper (paths only, no shell); `command` kind passes the value on stdin only | `custom/envfile` › *keeps the credential out of every spawned argv*, `security/custom` › *never an argv* |
+| SEC-010 no temporary copies | `localFile.atomicWrite` (0600, deterministic unlink) | `leakage` › *SEC-010*, `custom/envfile` › *interrupted write* |
 | §23 derived-canary search | `redaction.derivations` (shared by product and harness) | `leakage` › *derivations cover the required encodings* |
 
 ### Authorization (SPEC.md §7–§12, §25)
@@ -71,7 +71,22 @@ shell string, a global, a cache, or anything serialized.
 | Same-origin POSTs only | `#originOk` (`Origin`, `Sec-Fetch-Site`) | `ui` › *refuses a cross-site POST even with the session cookie* |
 | Stage B typed confirmation | server compares `confirm_name` with `confirmationPhrase` before executing | `ui` › *writes nothing until the destination name is typed at stage B* |
 | Loopback bind only | `isLoopbackBindAddress` at `start()` | `ui` › *refuses to bind anywhere but loopback* |
-| `.env` names and git hygiene | `ENV_FILENAME_PATTERN`; new un-ignored file refused in `preflight` | `envAdapter` › *accepts only env file names…*, *refuses a new env file that git would not ignore* |
+| `.env` names and git hygiene | `ENV_FILENAME_PATTERN`; new un-ignored file refused by `gitHygiene` | `envfile` › *accepts only env file names…*, *refuses a new env file that git would not ignore* |
+
+### Custom destinations (docs/specs/custom-destinations)
+
+| Requirement | Implementation | Test |
+| --- | --- | --- |
+| Closed, bounded definitions; `{{secret}}` exactly once, never in a URL or argv | `custom/definition.ts` (`parseDefinition`) | `custom/definition` |
+| One identity per definition | RFC 8785 canonical JSON + SHA-256, re-checked in `store` | `custom/definition` › *one identity…* |
+| Display ≡ execution | rendered from `definition_json` in the frozen target; executor reads the same field | `custom/render`, `custom/file` (end to end) |
+| Risk signals on the main screen | `custom/render.ts` `riskSignals` | `custom/render`, `security/custom` › *homograph*, *private or metadata address* |
+| Always high risk, always Stage B | `CustomDestinationAdapter.calculateRisk`, `policy.ts` | `custom/adapter` |
+| http: https only, pinned DNS, no redirects, no private addresses, no response to the agent | `custom/http.ts` | `custom/http`, `security/custom` |
+| command: pinned binary, stdin only, minimal env, timeout | `custom/command.ts` | `custom/command`, `security/custom` › *never an argv* |
+| file: roots, symlinks, atomic 0600, git hygiene | `custom/file.ts`, `custom/localFile.ts` | `custom/envfile`, `security/audit-findings` |
+| Saved destinations pinned by hash; edits reported as changed | `custom/store.ts` | `custom/store` |
+| No canary in any channel, any kind | — | `security/custom` › *confidentiality across kinds* |
 
 ### State machine, replay, concurrency (SPEC.md §14, §18.5–§18.7, §28–§31)
 
@@ -93,8 +108,8 @@ shell string, a global, a cache, or anything serialized.
 | Sanitizer failure suppresses | `#sanitize` catches everything | `provider-errors` › *throws inside its sanitizer* |
 | Status-code mapping only | `GcpSecretManagerAdapter.sanitizeError` | `provider-errors` › *maps provider status N* |
 | `arbitrary-network` disabled | `AdapterRegistry.register` refuses it | `malicious-agent` › *§16 cannot even be registered* |
-| `.env` symlink/traversal/git rules | `src/adapters/envFile.ts` | `test/envAdapter.test.ts` |
-| Canonical paths (a linked directory cannot escape a root) | `envFile.canonicalDirectory`, re-checked at write time; `config.canonicalRoot` | `audit-findings` › *a symlinked directory cannot escape the allowed roots* |
+| `.env` symlink/traversal/git rules | `src/custom/localFile.ts` | `test/custom/envfile.test.ts` |
+| Canonical paths (a linked directory cannot escape a root) | `localFile.canonicalDirectory`, re-checked at write time; `config.canonicalRoot` | `audit-findings` › *a symlinked directory cannot escape the allowed roots* |
 | Terminal is forever, even for a late provider answer | `SecretBroker.#finish` | `audit-findings` › *a terminal request stays terminal* |
 | UI headers, masking, PRG, expiry | `ui/render.securityHeaders`, `ui/server` | `test/security/ui/ui.test.ts` |
 | Hostile metadata rendering | `redaction.safeDisplay` + HTML escaping | `test/security/fuzz/fuzz.test.ts` |
@@ -112,7 +127,7 @@ build.
   and an OAuth stack, none of which a stdio server uses. The protocol is implemented in
   `src/mcp/server.ts` instead, and `test/mcpProtocol.test.ts` pins the wire behaviour.
 - **Why not elicitation?** The spec-native way to collect input mid-tool returns the value
-  through the MCP protocol and into the model's context — precisely the disclosure Veil
+  through the MCP protocol and into the model's context — precisely the disclosure Lockbox
   exists to prevent. The out-of-band browser window is the point, not a workaround.
 - **Tool names use underscores** (`secret_store`, not `secret.store` as SPEC.md §13 writes
   it) because several MCP clients constrain tool names to `[a-zA-Z0-9_-]`. The contract is
@@ -146,5 +161,5 @@ waiters are dropped when they time out, and the browser opener validates the URL
 
 See the README's "Security assumptions and limitations". The short version: the broker
 process sees the credential, V8 cannot guarantee memory erasure, the loopback UI is
-reachable by any process running as you, and Veil does not judge whether the destination
+reachable by any process running as you, and Lockbox does not judge whether the destination
 you approved was a good idea.

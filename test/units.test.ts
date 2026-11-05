@@ -104,13 +104,13 @@ describe('policy', () => {
 describe('configuration', () => {
   it('reads the environment and clamps hostile values', () => {
     const config = configFromEnv({
-      VEIL_REQUEST_TTL_SECONDS: '99999',
-      VEIL_ADAPTER_TIMEOUT_SECONDS: '0',
-      VEIL_STAGE_B_FOR_MEDIUM: 'false',
-      VEIL_OPEN_BROWSER: 'no',
-      VEIL_DISCLOSE_AUTHORIZATION_URL: 'true',
-      VEIL_ENABLED_ADAPTERS: 'env-file, gcp-secret-manager',
-      VEIL_UI_PORT: '0',
+      LOCKBOX_REQUEST_TTL_SECONDS: '99999',
+      LOCKBOX_ADAPTER_TIMEOUT_SECONDS: '0',
+      LOCKBOX_STAGE_B_FOR_MEDIUM: 'false',
+      LOCKBOX_OPEN_BROWSER: 'no',
+      LOCKBOX_DISCLOSE_AUTHORIZATION_URL: 'true',
+      LOCKBOX_ENABLED_ADAPTERS: 'env-file, gcp-secret-manager',
+      LOCKBOX_UI_PORT: '0',
     });
 
     expect(config.requestTtlSeconds).toBe(3600);
@@ -127,6 +127,26 @@ describe('configuration', () => {
     expect(config.stageBForMedium).toBe(true);
     expect(config.allowGitTrackedEnv).toBe(false);
     expect(config.enabledAdapters).toBeUndefined();
+    expect(config.customDestinations).toBe('save');
+    expect(config.customHttpAllowPrivate).toBe(false);
+  });
+
+  it('reads the destination settings and falls back to the stricter mode on typos', () => {
+    const config = configFromEnv({
+      LOCKBOX_CUSTOM_DESTINATIONS: 'Save',
+      LOCKBOX_CUSTOM_KINDS: 'http, file, shell',
+      LOCKBOX_CUSTOM_HTTP_HOSTS: 'API.Vercel.com, api.doppler.com',
+      LOCKBOX_CUSTOM_HTTP_ALLOW_PRIVATE: 'true',
+    });
+    expect(config.customDestinations).toBe('save');
+    expect(config.customKinds).toEqual(['http', 'file']);
+    expect(config.customHttpHosts).toEqual(['api.vercel.com', 'api.doppler.com']);
+    expect(config.customHttpAllowPrivate).toBe(true);
+
+    for (const value of ['once', 'off', 'yes', 'savee']) {
+      expect(configFromEnv({ LOCKBOX_CUSTOM_DESTINATIONS: value }).customDestinations).toBe('once');
+    }
+    expect(configFromEnv({}).customKinds).toEqual(['http', 'command', 'file']);
   });
 });
 

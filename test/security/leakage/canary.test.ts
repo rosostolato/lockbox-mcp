@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { EnvFileAdapter } from '../../../src/adapters/envFile.js';
+import { CustomDestinationAdapter } from '../../../src/adapters/custom.js';
 import { AdapterRegistry } from '../../../src/adapters/registry.js';
 import { SECRET_SHAPED_FIELD } from '../../../src/mcp/tools.js';
 import { Canary } from '../../support/canary.js';
@@ -138,15 +138,25 @@ describe('SEC-010: temporary copies', () => {
     const root = makeTempDir();
     const canary = Canary.create();
     const config = testConfig({ envAllowedRoots: [root] });
-    const harness = await Harness.start(config, new AdapterRegistry([new EnvFileAdapter(config)]));
+    const harness = await Harness.start(
+      config,
+      new AdapterRegistry([new CustomDestinationAdapter(config)]),
+    );
     const envPath = join(root, '.env');
 
     try {
       const payload = await harness.callTool('secret_store', {
-        destination: 'env-file',
+        destination: 'custom',
         name: 'API_TOKEN',
-        target: { path: '.env' },
-        write_mode: 'create',
+        target: {
+          definition: {
+            kind: 'file',
+            label: 'Project .env',
+            path: '.env',
+            template: '{{name}}={{secret}}',
+            mode: 'env',
+          },
+        },
         environment: 'development',
       });
       const status = await harness.finishFlow(payload, canary.value);

@@ -3,7 +3,7 @@
  *
  * The Stage A link is a capability: whoever holds it can complete the human's
  * half of the flow. A compromised agent with a shell or an HTTP tool is exactly
- * the threat model of SPEC.md §18.1, so by default Veil hands that link to the
+ * the threat model of SPEC.md §18.1, so by default Lockbox hands that link to the
  * user's browser and gives the agent only a request id.
  */
 

@@ -1,4 +1,4 @@
-/** Test doubles: adapters and provider transports that behave badly on purpose. */
+/** Test doubles: adapters that behave badly on purpose. */
 
 import {
   SecretDestinationAdapter,
@@ -6,12 +6,7 @@ import {
   scalarString,
   type JsonSchema,
 } from '../../src/adapters/base.js';
-import type {
-  GoogleRequest,
-  GoogleResponse,
-  GoogleTransport,
-} from '../../src/adapters/googleTransport.js';
-import type { VeilConfig } from '../../src/config.js';
+import type { LockboxConfig } from '../../src/config.js';
 import { ErrorCode, publicError, type PublicError } from '../../src/errors.js';
 import {
   DestinationClass,
@@ -39,7 +34,7 @@ export class RecordingAdapter extends SecretDestinationAdapter {
   readonly targets: NormalizedTarget[] = [];
   readonly urls: string[] = [];
 
-  constructor(config: VeilConfig, options: { exists?: boolean } = {}) {
+  constructor(config: LockboxConfig, options: { exists?: boolean } = {}) {
     super(config);
     this.exists = options.exists ?? false;
   }
@@ -201,146 +196,6 @@ export class MalformedResultAdapter extends RecordingAdapter {
   override store(secret: SecretBuffer): Promise<StoreResult> {
     return Promise.resolve({ secret: secret.toText() } as unknown as StoreResult);
   }
-}
-
-// -- provider transport doubles ---------------------------------------------
-
-export interface RecordedRequest {
-  readonly method: string;
-  readonly url: string;
-  readonly body: unknown;
-}
-
-export class FakeSecretManager {
-  readonly requests: RecordedRequest[] = [];
-  readonly payloads: [string, string][] = [];
-  readonly disabled: string[] = [];
-  existing = new Set<string>();
-  versions = new Map<string, string[]>();
-  failStatus: number | null = null;
-
-  transport(): GoogleTransport {
-    return (request: GoogleRequest): Promise<GoogleResponse> => {
-      this.requests.push({ method: request.method, url: request.url, body: request.body });
-      const url = request.url;
-
-      if (request.method === 'GET' && url.endsWith('/versions')) {
-        const parent = url.slice(url.indexOf('/v1/') + 4, url.length - '/versions'.length);
-        const names = this.versions.get(parent) ?? [];
-        return Promise.resolve({
-          status: 200,
-          body: { versions: names.map((name) => ({ name, state: 'ENABLED' })) },
-        });
-      }
-      if (request.method === 'GET') {
-        const name = url.slice(url.indexOf('/v1/') + 4);
-        return Promise.resolve(
-          this.existing.has(name) ? { status: 200, body: { name } } : { status: 404, body: null },
-        );
-      }
-      if (url.includes('/secrets?secretId=')) {
-        const project = url.slice(url.indexOf('/projects/') + 1, url.indexOf('/secrets?'));
-        const secretId = decodeURIComponent(
-          url.slice(url.indexOf('secretId=') + 'secretId='.length),
-        );
-        const name = `${project}/secrets/${secretId}`;
-        if (this.existing.has(name)) return Promise.resolve({ status: 409, body: null });
-        this.existing.add(name);
-        return Promise.resolve({ status: 200, body: { name } });
-      }
-      if (url.endsWith(':addVersion')) {
-        if (this.failStatus !== null) {
-          return Promise.resolve({ status: this.failStatus, body: { error: 'provider failure' } });
-        }
-        const parent = url.slice(url.indexOf('/v1/') + 4, url.length - ':addVersion'.length);
-        const data = (request.body as { payload: { data: string } }).payload.data;
-        this.payloads.push([parent, Buffer.from(data, 'base64').toString('utf8')]);
-        const names = this.versions.get(parent) ?? [];
-        const name = `${parent}/versions/${names.length + 1}`;
-        this.versions.set(parent, [...names, name]);
-        return Promise.resolve({ status: 200, body: { name } });
-      }
-      if (url.endsWith(':disable')) {
-        this.disabled.push(url.slice(url.indexOf('/v1/') + 4, url.length - ':disable'.length));
-        return Promise.resolve({ status: 200, body: {} });
-      }
-      return Promise.resolve({ status: 404, body: null });
-    };
-  }
-}
-
-export class FakeFirestore {
-  readonly documents = new Map<string, Record<string, unknown>>();
-  readonly requests: RecordedRequest[] = [];
-
-  transport(): GoogleTransport {
-    return (request: GoogleRequest): Promise<GoogleResponse> => {
-      this.requests.push({ method: request.method, url: request.url, body: request.body });
-      const path = documentPath(request.url);
-
-      if (request.method === 'GET') {
-        const document = this.documents.get(path);
-        return Promise.resolve(
-          document ? { status: 200, body: { fields: document } } : { status: 404, body: null },
-        );
-      }
-      // Real PATCH semantics: only the path named in updateMask changes, so a
-      // dotted mask sets one leaf inside a map and keeps its siblings.
-      const mask = decodeURIComponent(
-        new URL(request.url, 'https://fake.invalid').searchParams.get('updateMask.fieldPaths') ??
-          '',
-      );
-      const segments = mask.split('.');
-      const incoming = (request.body as { fields: Record<string, unknown> }).fields;
-      const document = structuredClone(this.documents.get(path) ?? {});
-      let source: Record<string, unknown> = incoming;
-      let target: Record<string, unknown> = document;
-      for (const [index, segment] of segments.entries()) {
-        const value = source[segment] as { mapValue?: { fields?: Record<string, unknown> } };
-        if (index === segments.length - 1) {
-          target[segment] = value;
-          break;
-        }
-        const existing = target[segment] as { mapValue?: { fields?: Record<string, unknown> } };
-        const fields = existing?.mapValue?.fields ?? {};
-        target[segment] = { mapValue: { fields } };
-        target = fields;
-        source = value.mapValue?.fields ?? {};
-      }
-      this.documents.set(path, document);
-      return Promise.resolve({ status: 200, body: { name: path } });
-    };
-  }
-
-  /** The plain string at a dotted field path, or undefined. */
-  valueAt(path: string, fieldPath: string): string | undefined {
-    let node: unknown = { mapValue: { fields: this.documents.get(path) ?? {} } };
-    for (const segment of fieldPath.split('.')) {
-      node = (node as { mapValue?: { fields?: Record<string, unknown> } }).mapValue?.fields?.[
-        segment
-      ];
-      if (node === undefined) return undefined;
-    }
-    return (node as { stringValue?: string }).stringValue;
-  }
-
-  /** The stored plain values, for assertions. */
-  values(path: string): Record<string, string> {
-    const document = this.documents.get(path) ?? {};
-    return Object.fromEntries(
-      Object.entries(document).map(([key, value]) => [
-        key,
-        (value as { stringValue?: string }).stringValue ?? '',
-      ]),
-    );
-  }
-}
-
-function documentPath(url: string): string {
-  const withoutQuery = url.split('?')[0] ?? '';
-  const marker = '/documents/';
-  const index = withoutQuery.indexOf(marker);
-  return index === -1 ? withoutQuery : withoutQuery.slice(index + marker.length);
 }
 
 /** A sink that swallows log output. */

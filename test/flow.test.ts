@@ -88,7 +88,7 @@ describe('credential request flow', () => {
 
   it('answers initialize and ping', async () => {
     const response = await harness.rpc('initialize', { protocolVersion: '2025-06-18' });
-    expect(response.result?.serverInfo).toEqual({ name: 'veil', version: '0.1.0' });
+    expect(response.result?.serverInfo).toEqual({ name: 'lockbox', version: '0.1.0' });
     expect(response.result?.capabilities).toEqual({ tools: { listChanged: false } });
     const ping = await harness.rpc('ping');
     expect(ping.result).toEqual({});

@@ -23,15 +23,15 @@
 import { z } from 'zod';
 
 import { AdapterError, type SecretDestinationAdapter } from './adapters/base.js';
-import type { AdapterRegistry } from './adapters/registry.js';
-import type { VeilConfig } from './config.js';
+import { CUSTOM_ADAPTER_ID, SAVED_DESTINATION, type AdapterRegistry } from './adapters/registry.js';
+import type { LockboxConfig } from './config.js';
 import {
   ErrorCode,
   INTERNAL_ERROR,
-  VeilError,
+  LockboxError,
   publicError,
   publicErrorToJSON,
-  veilError,
+  lockboxError,
   type PublicError,
 } from './errors.js';
 import { newRequestId, newToken, tokenEquals } from './ids.js';
@@ -64,7 +64,8 @@ export const TERMINAL_HISTORY_LIMIT = 512;
 export interface StoreRequestParams {
   readonly destination: string;
   readonly name: string;
-  readonly target: Readonly<Record<string, string | number | boolean>>;
+  /** Scalars, or `{ definition }` / `{ saved }` for a custom destination. */
+  readonly target: Readonly<Record<string, unknown>>;
   readonly writeMode: WriteMode;
   readonly environment: Environment;
   readonly description?: string;
@@ -176,7 +177,7 @@ export class SecretBroker {
   #clock: () => number;
 
   constructor(
-    readonly config: VeilConfig,
+    readonly config: LockboxConfig,
     readonly registry: AdapterRegistry,
     options: { logger?: AuditLogger; clock?: () => number } = {},
   ) {
@@ -212,7 +213,7 @@ export class SecretBroker {
    *
    * The link is a capability: anything holding it can complete Stage A. An agent
    * with a shell or an HTTP tool could therefore authorize its own request, so by
-   * default Veil hands the link to the human's browser and gives the agent only a
+   * default Lockbox hands the link to the human's browser and gives the agent only a
    * request id (SPEC.md §4.2, §7).
    */
   disclosableAuthorizationUrl(request: SecretRequest): string | null {
@@ -224,7 +225,7 @@ export class SecretBroker {
   async createRequest(params: StoreRequestParams): Promise<SecretRequest> {
     const adapter = this.registry.get(params.destination);
     if (!adapter.supportedWriteModes().includes(params.writeMode)) {
-      throw veilError(
+      throw lockboxError(
         ErrorCode.INVALID_ARGUMENTS,
         'The destination does not support the requested write mode.',
       );
@@ -240,7 +241,7 @@ export class SecretBroker {
       'The destination target could not be interpreted.',
     );
     if (target.adapterId !== adapter.id) {
-      throw veilError(
+      throw lockboxError(
         ErrorCode.INVALID_TARGET,
         'The destination adapter produced an inconsistent target.',
       );
@@ -252,7 +253,7 @@ export class SecretBroker {
       'The destination target could not be validated.',
     );
     if (!validation.ok) {
-      throw veilError(
+      throw lockboxError(
         validation.code ?? ErrorCode.INVALID_TARGET,
         validation.message ?? 'The destination target is not valid.',
       );
@@ -264,7 +265,7 @@ export class SecretBroker {
       'The destination could not be prepared.',
     );
     if (!preflight.ok) {
-      throw veilError(
+      throw lockboxError(
         preflight.code ?? ErrorCode.PREFLIGHT_FAILED,
         preflight.message ?? 'The destination could not be prepared.',
       );
@@ -310,7 +311,7 @@ export class SecretBroker {
 
     this.#sweepExpired();
     if (this.#active.size >= this.config.maxActiveRequests) {
-      throw veilError(
+      throw lockboxError(
         ErrorCode.TOO_MANY_REQUESTS,
         'Too many credential requests are already pending.',
       );
@@ -349,10 +350,10 @@ export class SecretBroker {
 
   get(requestId: unknown): SecretRequest {
     if (typeof requestId !== 'string') {
-      throw veilError(ErrorCode.REQUEST_NOT_FOUND, 'Unknown credential request.');
+      throw lockboxError(ErrorCode.REQUEST_NOT_FOUND, 'Unknown credential request.');
     }
     const request = this.#active.get(requestId) ?? this.#history.get(requestId);
-    if (!request) throw veilError(ErrorCode.REQUEST_NOT_FOUND, 'Unknown credential request.');
+    if (!request) throw lockboxError(ErrorCode.REQUEST_NOT_FOUND, 'Unknown credential request.');
     this.#checkExpiry(request);
     return request;
   }
@@ -362,7 +363,7 @@ export class SecretBroker {
     const status = request.publicStatus(this.disclosableAuthorizationUrl(request) ?? undefined);
     if (!('authorization_url' in status) && !isTerminal(request.state)) {
       status.authorization =
-        'Veil has opened its own window on the user’s machine. Ask the user to ' +
+        'Lockbox has opened its own window on the user’s machine. Ask the user to ' +
         'complete it there; the link is deliberately not shared with you.';
     }
     return status;
@@ -384,10 +385,10 @@ export class SecretBroker {
     let buffer: SecretBuffer | null = null;
     try {
       if (raw.length === 0) {
-        throw veilError(ErrorCode.EMPTY_SECRET, 'No credential value was provided.');
+        throw lockboxError(ErrorCode.EMPTY_SECRET, 'No credential value was provided.');
       }
       if (raw.length > MAX_SECRET_BYTES) {
-        throw veilError(ErrorCode.SECRET_TOO_LARGE, 'The credential value is too large.');
+        throw lockboxError(ErrorCode.SECRET_TOO_LARGE, 'The credential value is too large.');
       }
       buffer = new SecretBuffer(raw);
 
@@ -442,7 +443,10 @@ export class SecretBroker {
   cancel(requestId: unknown, options: { token?: string; reason?: string } = {}): void {
     const request = this.get(requestId);
     if (isTerminal(request.state)) {
-      throw veilError(ErrorCode.REQUEST_NOT_ACTIVE, 'This credential request is no longer active.');
+      throw lockboxError(
+        ErrorCode.REQUEST_NOT_ACTIVE,
+        'This credential request is no longer active.',
+      );
     }
     if (options.token !== undefined) {
       const valid =
@@ -450,11 +454,11 @@ export class SecretBroker {
         tokenEquals(request.confirmToken, options.token);
       if (!valid) {
         this.log.security('token_mismatch', { request_id: request.requestId, stage: 'C' });
-        throw veilError(ErrorCode.UNAUTHORIZED, 'Invalid authorization token.');
+        throw lockboxError(ErrorCode.UNAUTHORIZED, 'Invalid authorization token.');
       }
     }
     if (request.state === RequestState.EXECUTING) {
-      throw veilError(
+      throw lockboxError(
         ErrorCode.INVALID_STATE,
         'The operation is already executing and cannot be cancelled.',
       );
@@ -478,7 +482,7 @@ export class SecretBroker {
     });
     if (!isTerminal(existing.state)) {
       if (existing.state === RequestState.EXECUTING) {
-        throw veilError(
+        throw lockboxError(
           ErrorCode.INVALID_STATE,
           'The operation is already executing and cannot be revised.',
         );
@@ -544,9 +548,9 @@ export class SecretBroker {
           : request.state === RequestState.CANCELLED
             ? ErrorCode.REQUEST_CANCELLED
             : ErrorCode.REQUEST_NOT_ACTIVE;
-      throw veilError(code, 'This credential request is no longer active.');
+      throw lockboxError(code, 'This credential request is no longer active.');
     }
-    throw veilError(
+    throw lockboxError(
       ErrorCode.INVALID_STATE,
       'The credential request is not at the expected stage.',
     );
@@ -555,7 +559,7 @@ export class SecretBroker {
   #requireToken(request: SecretRequest, expected: string, provided: string, stage: string): void {
     if (typeof provided !== 'string' || !tokenEquals(expected, provided)) {
       this.log.security('token_mismatch', { request_id: request.requestId, stage });
-      throw veilError(ErrorCode.UNAUTHORIZED, 'Invalid authorization token.');
+      throw lockboxError(ErrorCode.UNAUTHORIZED, 'Invalid authorization token.');
     }
   }
 
@@ -569,7 +573,7 @@ export class SecretBroker {
 
   #transition(request: SecretRequest, toState: RequestState): void {
     if (!ALLOWED_TRANSITIONS[request.state].has(toState)) {
-      throw veilError(
+      throw lockboxError(
         ErrorCode.INVALID_STATE,
         'The credential request is not at the expected stage.',
       );
@@ -666,7 +670,7 @@ export class SecretBroker {
 
     try {
       if (snapshotDigest(snapshot) !== request.authorizedDigest) {
-        throw veilError(
+        throw lockboxError(
           ErrorCode.SNAPSHOT_MISMATCH,
           'The authorized operation changed and can no longer be executed.',
         );
@@ -675,22 +679,22 @@ export class SecretBroker {
         adapter.id !== snapshot.target.adapterId ||
         adapter !== this.registry.get(snapshot.target.adapterId)
       ) {
-        throw veilError(
+        throw lockboxError(
           ErrorCode.SNAPSHOT_MISMATCH,
           'The authorized destination adapter changed and cannot be executed.',
         );
       }
       if (!secret || secret.destroyed) {
-        throw veilError(ErrorCode.INVALID_STATE, 'No credential value is available.');
+        throw lockboxError(ErrorCode.INVALID_STATE, 'No credential value is available.');
       }
       if (snapshot.risk.requiresStageB && request.confirmation !== 'explicit') {
-        throw veilError(
+        throw lockboxError(
           ErrorCode.CONFIRMATION_REQUIRED,
           'This operation requires explicit confirmation before execution.',
         );
       }
     } catch (error) {
-      const publicRepresentation = error instanceof VeilError ? error.public : INTERNAL_ERROR;
+      const publicRepresentation = error instanceof LockboxError ? error.public : INTERNAL_ERROR;
       this.#finish(request, RequestState.FAILED, {
         reason: 'precondition',
         error: publicRepresentation,
@@ -728,7 +732,9 @@ export class SecretBroker {
       if (failure) result = null;
     } catch (error) {
       failure =
-        error instanceof VeilError ? error.public : await this.#sanitize(request, adapter, error);
+        error instanceof LockboxError
+          ? error.public
+          : await this.#sanitize(request, adapter, error);
     }
 
     const durationMs = Date.now() - started;
@@ -836,10 +842,10 @@ export class SecretBroker {
     try {
       return await call();
     } catch (error) {
-      if (error instanceof AdapterError) throw new VeilError(error.public);
-      if (error instanceof VeilError) throw error;
+      if (error instanceof AdapterError) throw new LockboxError(error.public);
+      if (error instanceof LockboxError) throw error;
       this.log.error('adapter_step_failed', { code: fallbackCode });
-      throw veilError(fallbackCode, fallbackMessage);
+      throw lockboxError(fallbackCode, fallbackMessage);
     }
   }
 }
@@ -879,12 +885,15 @@ export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Pr
 // -- parameter validation ----------------------------------------------------
 
 const targetValue = z.union([z.string().max(MAX_TARGET_VALUE_LENGTH), z.number(), z.boolean()]);
+// Only a custom destination's `definition` is an object; its own schema
+// (src/custom/definition.ts) bounds and closes it.
+const targetObject = z.record(z.string(), z.unknown());
 
 export const storeParamsSchema = z
   .object({
     destination: z.string(),
     name: z.string().trim().min(1).max(MAX_NAME_LENGTH),
-    target: z.record(z.string(), targetValue),
+    target: z.record(z.string(), z.union([targetValue, targetObject])),
     write_mode: z.enum([WriteMode.CREATE, WriteMode.NEW_VERSION, WriteMode.REPLACE]).optional(),
     environment: z
       .enum([
@@ -907,7 +916,7 @@ export const storeParamsSchema = z
  */
 export function parseStoreParams(payload: unknown, registry: AdapterRegistry): StoreRequestParams {
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-    throw veilError(ErrorCode.INVALID_ARGUMENTS, 'Arguments must be an object.');
+    throw lockboxError(ErrorCode.INVALID_ARGUMENTS, 'Arguments must be an object.');
   }
 
   const allowed = new Set([
@@ -920,7 +929,7 @@ export function parseStoreParams(payload: unknown, registry: AdapterRegistry): S
   ]);
   const unknown = Object.keys(payload).filter((key) => !allowed.has(key));
   if (unknown.length > 0) {
-    throw veilError(
+    throw lockboxError(
       ErrorCode.FORBIDDEN_FIELD,
       'The request contained fields that are not part of the tool contract.',
       {
@@ -937,26 +946,51 @@ export function parseStoreParams(payload: unknown, registry: AdapterRegistry): S
     const issue = parsed.error.issues[0];
     const path = issue?.path.join('.') ?? '';
     if (path.startsWith('target')) {
-      throw veilError(ErrorCode.INVALID_TARGET, 'The destination target is not valid.');
+      throw lockboxError(ErrorCode.INVALID_TARGET, 'The destination target is not valid.');
     }
     if (path === 'destination') {
-      throw veilError(ErrorCode.UNKNOWN_DESTINATION, 'The requested destination is not available.');
+      throw lockboxError(
+        ErrorCode.UNKNOWN_DESTINATION,
+        'The requested destination is not available.',
+      );
     }
-    throw veilError(ErrorCode.INVALID_ARGUMENTS, 'The request arguments are not valid.');
+    throw lockboxError(ErrorCode.INVALID_ARGUMENTS, 'The request arguments are not valid.');
   }
 
   const value = parsed.data;
-  if (!registry.has(value.destination)) {
-    throw veilError(ErrorCode.UNKNOWN_DESTINATION, 'The requested destination is not available.');
+  let destination = value.destination;
+  let target: Record<string, unknown> = value.target;
+
+  // `saved:<name>` is a custom destination the human approved and saved earlier.
+  const saved = SAVED_DESTINATION.exec(destination);
+  if (saved) {
+    if (Object.keys(target).length > 0) {
+      throw lockboxError(ErrorCode.INVALID_TARGET, 'A saved destination takes no target.');
+    }
+    destination = CUSTOM_ADAPTER_ID;
+    target = { saved: saved[1] };
   }
-  if (Object.keys(value.target).length > MAX_TARGET_FIELDS) {
-    throw veilError(ErrorCode.INVALID_TARGET, 'The destination target has too many fields.');
+  if (
+    destination !== CUSTOM_ADAPTER_ID &&
+    Object.values(target).some((item) => typeof item === 'object')
+  ) {
+    throw lockboxError(ErrorCode.INVALID_TARGET, 'The destination target is not valid.');
+  }
+
+  if (!registry.has(destination)) {
+    throw lockboxError(
+      ErrorCode.UNKNOWN_DESTINATION,
+      'The requested destination is not available.',
+    );
+  }
+  if (Object.keys(target).length > MAX_TARGET_FIELDS) {
+    throw lockboxError(ErrorCode.INVALID_TARGET, 'The destination target has too many fields.');
   }
 
   return {
-    destination: value.destination,
+    destination,
     name: value.name.trim(),
-    target: Object.freeze({ ...value.target }),
+    target: deepFreeze(structuredClone(target)),
     writeMode: value.write_mode ?? WriteMode.CREATE,
     environment: value.environment ?? Environment.UNKNOWN,
     ...(value.description === undefined ? {} : { description: value.description }),

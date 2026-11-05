@@ -156,7 +156,7 @@ export const CREDENTIAL_SHAPED_VALUE: readonly RegExp[] = [
   /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/,
   // The canary marker used by the security suite: treated as credential
   // material by the product itself so a test can never "pass" by leaking it.
-  /VEIL_CANARY_[A-Za-z0-9]{8,}/,
+  /LOCKBOX_CANARY_[A-Za-z0-9]{8,}/,
   /SECURE_INPUT_CANARY_[A-Za-z0-9]{8,}/,
 ];
 

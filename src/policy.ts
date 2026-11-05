@@ -7,7 +7,7 @@
  * risk rather than lowering it.
  */
 
-import type { VeilConfig } from './config.js';
+import type { LockboxConfig } from './config.js';
 import {
   DestinationClass,
   Environment,
@@ -20,7 +20,7 @@ import {
 } from './model.js';
 
 export function evaluateRisk(
-  config: VeilConfig,
+  config: LockboxConfig,
   input: {
     adapterAssessment: RiskAssessment;
     adapterFloor: RiskLevel;
@@ -48,11 +48,17 @@ export function evaluateRisk(
   }
 
   if (target.destinationClass === DestinationClass.ARBITRARY_NETWORK) {
-    // Unreachable: the registry refuses these adapters. Kept as a floor so a
-    // future adapter cannot quietly land in a lower band.
+    // Only the custom adapter may produce these (the registry refuses any other),
+    // and its definitions are always reviewed in full: never below high.
     level = RiskLevel.HIGH;
     forceStageB = true;
     reasons.push('Destination is an arbitrary network endpoint.');
+  }
+
+  if (target.destinationClass === DestinationClass.LOCAL_COMMAND) {
+    level = RiskLevel.HIGH;
+    forceStageB = true;
+    reasons.push('Destination runs a program on this machine.');
   }
 
   if (operation === WriteMode.REPLACE) {
@@ -89,7 +95,7 @@ export function evaluateRisk(
     }
     reasons.push(
       `Requested environment '${claimedEnvironment}' contradicts the destination, ` +
-        `which Veil classified as '${target.environment}'.`,
+        `which Lockbox classified as '${target.environment}'.`,
     );
   }
 
@@ -100,7 +106,7 @@ export function evaluateRisk(
   };
 }
 
-function stageBByLevel(config: VeilConfig, level: RiskLevel): boolean {
+function stageBByLevel(config: LockboxConfig, level: RiskLevel): boolean {
   if (level === RiskLevel.HIGH) return true;
   if (level === RiskLevel.MEDIUM) return config.stageBForMedium;
   return config.stageBForLow;

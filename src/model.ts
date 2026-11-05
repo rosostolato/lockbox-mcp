@@ -127,6 +127,7 @@ export const DestinationClass = {
   LOCAL_PLAINTEXT: 'local-plaintext',
   REMOTE_APPLICATION_STORAGE: 'remote-application-storage',
   ARBITRARY_NETWORK: 'arbitrary-network',
+  LOCAL_COMMAND: 'local-command',
 } as const;
 export type DestinationClass = (typeof DestinationClass)[keyof typeof DestinationClass];
 
@@ -138,6 +139,8 @@ export const DESTINATION_CLASS_NOTICE: Partial<Record<DestinationClass, string>>
     'This destination may not be designed to store secrets.',
   [DestinationClass.ARBITRARY_NETWORK]:
     'This destination sends the credential to an arbitrary network endpoint.',
+  [DestinationClass.LOCAL_COMMAND]:
+    'This destination runs a program on this machine and hands it the credential.',
 });
 
 /**

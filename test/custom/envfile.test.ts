@@ -1,11 +1,16 @@
-/** `.env` adapter security (SPEC.md §33). */
+/**
+ * `.env` files as custom `file` destinations in `env` mode (REQ-008, REQ-020).
+ *
+ * Ported from the retired env-file adapter's suite: the same protections,
+ * now reached through an agent-written definition.
+ */
 
 import {
   chmodSync,
   existsSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -14,27 +19,30 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { EnvFileAdapter } from '../src/adapters/envFile.js';
-import { AdapterRegistry } from '../src/adapters/registry.js';
-import { ErrorCode } from '../src/errors.js';
-import { Environment, WriteMode } from '../src/model.js';
-import { SecretBuffer } from '../src/secretBuffer.js';
-import { Canary } from './support/canary.js';
-import { Harness, testConfig } from './support/harness.js';
-import { git, makeTempDir, removeTempDir } from './support/tmp.js';
+import { CustomDestinationAdapter } from '../../src/adapters/custom.js';
+import { AdapterRegistry } from '../../src/adapters/registry.js';
+import { ErrorCode } from '../../src/errors.js';
+import { Environment } from '../../src/model.js';
+import { SecretBuffer } from '../../src/secretBuffer.js';
+import { Canary } from '../support/canary.js';
+import { Harness, testConfig } from '../support/harness.js';
+import { git, makeTempDir, removeTempDir } from '../support/tmp.js';
+
+function definition(path = '.env', template = '{{name}}={{secret}}'): Record<string, unknown> {
+  return { kind: 'file', label: 'Project .env', path, template, mode: 'env' };
+}
 
 function args(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    destination: 'env-file',
+    destination: 'custom',
     name: 'API_TOKEN',
-    target: { path: '.env' },
-    write_mode: 'create',
+    target: { definition: definition() },
     environment: 'development',
     ...overrides,
   };
 }
 
-describe('env-file adapter', () => {
+describe('.env destinations', () => {
   let root: string;
   let harness: Harness;
   let canary: Canary;
@@ -42,7 +50,10 @@ describe('env-file adapter', () => {
   beforeEach(async () => {
     root = makeTempDir();
     const config = testConfig({ envAllowedRoots: [root] });
-    harness = await Harness.start(config, new AdapterRegistry([new EnvFileAdapter(config)]));
+    harness = await Harness.start(
+      config,
+      new AdapterRegistry([new CustomDestinationAdapter(config)]),
+    );
     canary = Canary.create();
   });
 
@@ -128,34 +139,22 @@ describe('env-file adapter', () => {
     expect(['STORED', 'FAILED']).toContain(status.state);
   });
 
-  it('refuses to overwrite an existing variable in create mode', async () => {
-    writeFileSync(join(root, '.env'), 'API_TOKEN=old-value\n');
-
-    const payload = await harness.callTool('secret_store', args());
-    expect(payload.requires_confirmation).toBe(true);
-    const status = await harness.finishFlow(payload, canary.value);
-
-    expect(status.state).toBe('FAILED');
-    expect((status.error as { code: string }).code).toBe(ErrorCode.DESTINATION_CONFLICT);
-    expect(readFileSync(join(root, '.env'), 'utf8')).toBe('API_TOKEN=old-value\n');
-  });
-
-  it('overwrites in replace mode after confirmation', async () => {
+  it('replaces an existing variable and says so on the main screen', async () => {
     writeFileSync(join(root, '.env'), 'API_TOKEN=old-value\nKEEP=1\n');
 
-    const payload = await harness.callTool('secret_store', args({ write_mode: 'replace' }));
-    const status = await harness.finishFlow(payload, canary.value);
+    const payload = await harness.callTool('secret_store', args());
+    const page = (await harness.get(harness.pathFor(payload))).body;
+    expect(page).toContain('A value already exists here and will be replaced');
 
+    const status = await harness.finishFlow(payload, canary.value);
     expect(status.state).toBe('STORED');
     const content = readFileSync(join(root, '.env'), 'utf8');
     expect(content).not.toContain('old-value');
     expect(content).toContain('KEEP=1');
   });
 
-  it('confirms by the variable name, not the directory path', async () => {
-    writeFileSync(join(root, '.env'), 'API_TOKEN=old-value\n');
-
-    const payload = await harness.callTool('secret_store', args({ write_mode: 'replace' }));
+  it('confirms by path and variable name, not the directory path', async () => {
+    const payload = await harness.callTool('secret_store', args());
     await harness.submitSecret(payload, canary.value);
     const page = await harness.get(harness.pathFor(payload));
 
@@ -166,13 +165,19 @@ describe('env-file adapter', () => {
 
   it('accepts only env file names by default', async () => {
     for (const path of ['public/robots.txt', 'config.json', 'secrets', '.envrc']) {
-      const payload = await harness.callTool('secret_store', args({ target: { path } }));
-      expect(payload.status).toBe('failed');
-      expect(payload.code).toBe('DESTINATION_NOT_PERMITTED');
+      const payload = await harness.callTool(
+        'secret_store',
+        args({ target: { definition: definition(path) } }),
+      );
+      expect(payload.status, path).toBe('failed');
+      expect(payload.code, path).toBe('DESTINATION_NOT_PERMITTED');
     }
     for (const path of ['.env', '.env.local', '.env.production']) {
-      const payload = await harness.callTool('secret_store', args({ target: { path } }));
-      expect(payload.status).not.toBe('failed');
+      const payload = await harness.callTool(
+        'secret_store',
+        args({ target: { definition: definition(path) } }),
+      );
+      expect(payload.status, path).not.toBe('failed');
     }
   });
 
@@ -190,10 +195,9 @@ describe('env-file adapter', () => {
   it('leaves the original intact when the write is interrupted', async () => {
     const envPath = join(root, '.env');
     writeFileSync(envPath, 'EXISTING=keep-me\n');
-    const config = testConfig({ envAllowedRoots: [root] });
-    const adapter = new EnvFileAdapter(config);
+    const adapter = new CustomDestinationAdapter(testConfig({ envAllowedRoots: [root] }));
     const target = await adapter.normalizeTarget(
-      { path: '.env' },
+      { definition: definition() },
       { name: 'API_TOKEN', environmentHint: Environment.DEVELOPMENT },
     );
 
@@ -201,7 +205,7 @@ describe('env-file adapter', () => {
     const spy = vi.spyOn(fsPromises.default, 'rename').mockRejectedValue(new Error('interrupted'));
     try {
       const buffer = new SecretBuffer(canary.raw);
-      await expect(adapter.store(buffer, target, WriteMode.CREATE)).rejects.toThrow('interrupted');
+      await expect(adapter.store(buffer, target)).rejects.toThrow('interrupted');
       buffer.zeroize();
     } finally {
       spy.mockRestore();
@@ -214,25 +218,28 @@ describe('env-file adapter', () => {
   it('refuses paths outside the allowed roots', async () => {
     const payload = await harness.callTool(
       'secret_store',
-      args({ target: { path: '/tmp/veil-escape.env' } }),
+      args({ target: { definition: definition('/tmp/lockbox-escape.env') } }),
     );
     expect(payload.status).toBe('failed');
     expect(payload.code).toBe(ErrorCode.DESTINATION_NOT_PERMITTED);
-    expect(existsSync('/tmp/veil-escape.env')).toBe(false);
+    expect(existsSync('/tmp/lockbox-escape.env')).toBe(false);
   });
 
-  it('refuses invalid variable names and falls back to the credential name', async () => {
-    for (const key of ['1BAD', 'with-dash', 'with space', 'WITH=EQUALS', 'x'.repeat(200)]) {
+  it('refuses invalid variable names, literal or from the credential name', async () => {
+    for (const key of ['1BAD', 'with-dash', 'with space', 'x'.repeat(200)]) {
       const payload = await harness.callTool(
         'secret_store',
-        args({ target: { path: '.env', key } }),
+        args({ target: { definition: definition('.env', `${key}={{secret}}`) } }),
       );
       expect(payload.status, key).toBe('failed');
       expect(payload.code, key).toBe(ErrorCode.INVALID_TARGET);
     }
+    const badName = await harness.callTool('secret_store', args({ name: 'not-a-variable' }));
+    expect(badName.code).toBe(ErrorCode.INVALID_TARGET);
 
     const payload = await harness.callTool('secret_store', args());
-    expect((payload.destination as { resource: string }).resource).toBe('.env → API_TOKEN');
+    const fields = (payload.destination as { fields: Record<string, string> }).fields;
+    expect(fields.key).toBe('API_TOKEN');
   });
 
   it('keeps the credential out of every spawned argv', async () => {

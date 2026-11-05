@@ -19,6 +19,13 @@ import { basename } from 'node:path';
 
 import type { SecretRequest } from '../broker.js';
 import {
+  destinationLine,
+  exactView,
+  isCustomTarget,
+  riskSignals,
+  signalLines,
+} from '../custom/render.js';
+import {
   DESTINATION_CLASS_NOTICE,
   DestinationClass,
   RequestState,
@@ -69,7 +76,7 @@ const WORDS = Object.keys(IDENTITY_WORDS) as IdentityWord[];
  * A per-process phrase the operator can check against the console.
  *
  * Anti-spoofing aid only (SPEC.md §18.4): a page that cannot show the phrase
- * printed by *your* Veil process is not your Veil process.
+ * printed by *your* Lockbox process is not your Lockbox process.
  */
 export function newIdentityPhrase(): string {
   return Array.from({ length: 3 }, () => WORDS[randomInt(WORDS.length)]).join(' ');
@@ -154,6 +161,28 @@ details ul { margin: 0; padding-left: 1rem; }
   font-size: 1.6rem; font-weight: 700; color: var(--ok); border: 2px solid var(--ok); }
 .state { font: .75rem var(--mono); color: var(--muted); }
 .promise { max-width: 28rem; margin: 1rem auto 0; font-size: .78rem; color: var(--muted); text-align: center; }
+.signal { font-size: .86rem; font-weight: 600; color: var(--warn); }
+details.exact { border-top: 1px solid var(--line); padding-top: .8rem; }
+details.exact summary { font-weight: 600; color: var(--accent); }
+.exact-op { font: .82rem/1.4 var(--mono); overflow-wrap: anywhere; margin-top: .7rem; }
+.exact-label { color: var(--muted); margin-top: .7rem; overflow-wrap: anywhere; }
+.exact-note { color: var(--danger); font-weight: 600; margin-top: .6rem; }
+details.exact pre { font: .78rem/1.45 var(--mono); background: var(--sunk); border-radius: 8px;
+  padding: .6rem .7rem; margin: .35rem 0 0; overflow-x: auto; white-space: pre; }
+.exact-headers { border-collapse: collapse; width: 100%; margin-top: .5rem; font: .78rem var(--mono); }
+.exact-headers th { text-align: left; color: var(--muted); font-weight: 500; padding: .2rem .6rem .2rem 0;
+  vertical-align: top; white-space: nowrap; }
+.exact-headers td { overflow-wrap: anywhere; padding: .2rem 0; }
+.exact-args { font: .78rem var(--mono); margin: .35rem 0 0; padding-left: 1.4rem; overflow-wrap: anywhere; }
+.chip-secret { background: var(--accent); color: var(--accent-ink); border-radius: 5px; padding: 0 .35em;
+  font-weight: 600; }
+.chip-name { border-bottom: 1px dotted var(--muted); }
+.save { display: grid; gap: .4rem; margin-top: .8rem; }
+.save-toggle { display: flex; align-items: center; gap: .45rem; margin: 0; font-weight: 500; }
+.save input[type=text] { padding: .55rem .7rem; font-size: .9rem; }
+.forget { text-align: center; }
+.link { background: none; border: 0; color: var(--muted); font: .8rem system-ui, sans-serif;
+  text-decoration: underline; cursor: pointer; padding: .2rem; }
 @media (max-width: 420px) { .actions { grid-template-columns: 1fr; } .actions .primary { order: -1; } }
 ${SWATCH_STYLE}
 `;
@@ -186,7 +215,7 @@ const SCRIPT = `
   }
 
   function shape(v, env) {
-    if (!v) return ['idle', 'Veil checks the format here. The value is never shown.'];
+    if (!v) return ['idle', 'Lockbox checks the format here. The value is never shown.'];
     if (/[\\r\\n]/.test(v)) return ['warn', 'Contains a line break. Check what you pasted.'];
     if (/^\\s|\\s$/.test(v)) return ['warn', 'Starts or ends with a space. Check what you pasted.'];
     var size = v.length + ' characters';
@@ -263,7 +292,7 @@ function sigil(identity: string): string {
     .map((word) => `<i class="sw-${word}"></i>`)
     .join('');
   return (
-    '<span class="sigil" title="Must match the words in your Veil terminal">' +
+    '<span class="sigil" title="Must match the words in your Lockbox terminal">' +
     `<span aria-hidden="true">${swatches}</span><code>${e(identity)}</code></span>`
   );
 }
@@ -275,7 +304,7 @@ export function page(title: string, body: string, options: PageOptions): string 
     '<meta name="viewport" content="width=device-width, initial-scale=1">' +
     '<meta name="referrer" content="no-referrer">' +
     '<meta name="robots" content="noindex, nofollow">' +
-    `<title>${e(title)} · Veil</title>` +
+    `<title>${e(title)} · Lockbox</title>` +
     `<style nonce="${escapeHtml(options.nonce)}">${STYLE}</style>` +
     '</head><body><main class="card">' +
     (options.band ?? '') +
@@ -284,7 +313,7 @@ export function page(title: string, body: string, options: PageOptions): string 
       ? `<footer class="foot">${sigil(options.identity)}${options.details ?? ''}</footer>`
       : '') +
     '</main>' +
-    '<p class="promise">Veil never shows a credential back to you, and never sends it to the ' +
+    '<p class="promise">Lockbox never shows a credential back to you, and never sends it to the ' +
     'agent or the model.</p>' +
     `<script nonce="${escapeHtml(options.nonce)}">${SCRIPT}</script>` +
     '</body></html>'
@@ -336,6 +365,7 @@ function overwriteLine(request: SecretRequest): string {
 
 function destinationPath(request: SecretRequest): string {
   const { target } = request.snapshot;
+  if (isCustomTarget(target)) return destinationLine(target);
   const parts = [target.providerLabel, target.accountLabel, target.resourceLabel].filter(
     (part): part is string => Boolean(part),
   );
@@ -343,7 +373,23 @@ function destinationPath(request: SecretRequest): string {
 }
 
 function destination(request: SecretRequest): string {
-  const classNotice = DESTINATION_CLASS_NOTICE[request.snapshot.target.destinationClass];
+  const { target } = request.snapshot;
+  if (isCustomTarget(target)) {
+    // The class notice moves into the disclosure: every custom destination is
+    // high risk and confirmed twice, so the main screen keeps only what is
+    // specific to this one (REQ-009, REQ-011).
+    const signals = riskSignals(target);
+    if (request.snapshot.existsAtPreflight) {
+      signals.push('A value already exists here and will be replaced');
+    }
+    return (
+      '<div class="dest"><small>Goes to</small>' +
+      destinationLine(target) +
+      signalLines(signals) +
+      '</div>'
+    );
+  }
+  const classNotice = DESTINATION_CLASS_NOTICE[target.destinationClass];
   return (
     '<div class="dest"><small>Goes to</small>' +
     destinationPath(request) +
@@ -412,6 +458,53 @@ function details(request: SecretRequest): string {
   );
 }
 
+/** "Send to" a host or a program, "Save to" a file or store. */
+function verb(request: SecretRequest): string {
+  const kind = request.snapshot.target.fields.kind;
+  return isCustomTarget(request.snapshot.target) && kind !== 'file' ? 'Send to' : 'Save to';
+}
+
+function customExactView(request: SecretRequest): string {
+  const { target, logicalName } = request.snapshot;
+  if (!isCustomTarget(target)) return '';
+  return exactView(target, logicalName, DESTINATION_CLASS_NOTICE[target.destinationClass]);
+}
+
+/**
+ * REQ-013: keep an approved custom destination for next time. Not offered for
+ * one that is already saved and unchanged.
+ */
+function saveOption(request: SecretRequest): string {
+  const { target } = request.snapshot;
+  if (!isCustomTarget(target) || target.fields.saved_status === 'saved') return '';
+  const suggested =
+    target.fields.saved_name ??
+    (target.resourceLabel
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40) ||
+      'destination');
+  return (
+    '<div class="save">' +
+    '<label class="save-toggle"><input type="checkbox" name="save" value="1" id="save"> ' +
+    'Save as a trusted destination</label>' +
+    '<input type="text" name="save_as" id="save_as" class="plain" maxlength="40" ' +
+    `pattern="[a-z0-9-]{1,40}" aria-label="Name for the saved destination" value="${e(suggested)}">` +
+    '</div>'
+  );
+}
+
+/** REQ-017: forget a saved destination from the window that uses it. */
+function forgetForm(request: SecretRequest, action: string): string {
+  const name = request.snapshot.target.fields.saved_name;
+  if (!isCustomTarget(request.snapshot.target) || !name) return '';
+  return (
+    `<form method="post" action="${action}/forget" class="forget">` +
+    `<button type="submit" class="link">Forget the saved destination “${e(name)}”</button></form>`
+  );
+}
+
 function cancelForm(action: string): string {
   return (
     `<form method="post" action="${action}/cancel">` +
@@ -448,7 +541,9 @@ export function stageAPage(request: SecretRequest, options: RequestPageOptions):
     '</div>' +
     (request.requiresStageB
       ? '<p class="lede">You confirm the destination on the next step. Nothing is written before that.</p>'
-      : '');
+      : '') +
+    customExactView(request) +
+    forgetForm(request, action);
   return page('Paste a credential', body, {
     ...options,
     band: band(request, options.secondsLeft),
@@ -458,12 +553,16 @@ export function stageAPage(request: SecretRequest, options: RequestPageOptions):
 
 export function stageBPage(
   request: SecretRequest,
-  options: RequestPageOptions & { confirmToken: string; mismatch?: boolean },
+  options: RequestPageOptions & { confirmToken: string; mismatch?: boolean; allowSave?: boolean },
 ): string {
   const action = escapeHtml(options.basePath);
   const phrase = confirmationPhrase(request);
   const environment = request.snapshot.target.environment;
-  const title = environment === 'production' ? 'Save to production?' : 'Confirm where this goes';
+  const title = isCustomTarget(request.snapshot.target)
+    ? `${verb(request)} ${e(shortDestination(request))}?`
+    : environment === 'production'
+      ? 'Save to production?'
+      : 'Confirm where this goes';
   const body =
     `<h1>${title}</h1>` +
     '<p class="lede">The credential was received. Nothing has been written yet, and it will ' +
@@ -478,11 +577,14 @@ export function stageBPage(
     (options.mismatch
       ? '<p class="status warn">That did not match. Type the name exactly as shown.</p>'
       : '') +
+    (options.allowSave ? saveOption(request) : '') +
     '</form>' +
     '<div class="actions">' +
     cancelForm(action) +
-    `<button type="submit" form="entry" class="btn primary" id="primary">Save to ${e(shortDestination(request))}</button>` +
-    '</div>';
+    `<button type="submit" form="entry" class="btn primary" id="primary">${verb(request)} ${e(shortDestination(request))}</button>` +
+    '</div>' +
+    customExactView(request) +
+    forgetForm(request, action);
   return page('Confirm the destination', body, {
     ...options,
     band: band(request, options.secondsLeft),
@@ -503,7 +605,7 @@ export function statusPage(
   };
   const notes: Partial<Record<RequestState, string>> = {
     [RequestState.STORED]:
-      'Veil wiped the value. The agent only learns that it was stored. You can close this window.',
+      'Lockbox wiped the value. The agent only learns that it was stored. You can close this window.',
     [RequestState.FAILED]: 'The credential was discarded.',
     [RequestState.CANCELLED]: 'The credential was discarded. You can close this window.',
     [RequestState.EXPIRED]: 'The credential was discarded. Ask the agent to start a new request.',

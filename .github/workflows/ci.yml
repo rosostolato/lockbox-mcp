@@ -58,14 +58,14 @@ jobs:
       - run: npm pack
       - name: Install the tarball and start the server
         run: |
-          mkdir -p /tmp/veil-package && cd /tmp/veil-package
+          mkdir -p /tmp/lockbox-package && cd /tmp/lockbox-package
           npm init -y >/dev/null
-          npm install "$GITHUB_WORKSPACE"/veil-mcp-*.tgz
-          ./node_modules/.bin/veil-mcp --version
+          npm install "$GITHUB_WORKSPACE"/lockbox-mcp-*.tgz
+          ./node_modules/.bin/lockbox-mcp --version
           printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-            | VEIL_UI_PORT=0 VEIL_OPEN_BROWSER=false VEIL_ENABLED_ADAPTERS=env-file \
-              ./node_modules/.bin/veil-mcp serve > out.json
-          grep -q '"name":"veil"' out.json
+            | LOCKBOX_UI_PORT=0 LOCKBOX_OPEN_BROWSER=false \
+              ./node_modules/.bin/lockbox-mcp serve > out.json
+          grep -q '"name":"lockbox"' out.json
 
   audit:
     runs-on: ubuntu-latest

@@ -1,30 +1,33 @@
-# Veil
+# Lockbox
 
 **Let your AI agent set up API keys without ever seeing them.**
 
-[![CI](https://github.com/rosostolato/veil-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/rosostolato/veil-mcp/actions/workflows/ci.yml)
+[![CI](https://github.com/rosostolato/lockbox-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/rosostolato/lockbox-mcp/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Node 20+](https://img.shields.io/badge/node-20%2B-blue.svg)](https://nodejs.org/)
 
-You ask Claude, Cursor or any MCP client to *"put the Stripe key in Secret Manager"*. The
-agent works out **where** it goes. You paste the value into Veil's own window. The key goes
-straight to the destination and never enters the chat, the prompt or the logs.
+You ask Claude, Cursor or any MCP client to *"put the Stripe key in our .env"* — or in Secret
+Manager, Vercel, your own API. The agent describes **where** it goes. You read that in Lockbox's
+own window and paste the value there. The key goes straight to the destination and never
+enters the chat, the prompt or the logs.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/paste-dark.png">
-    <img src="docs/images/paste-light.png" width="420" alt="Veil's window: a red PRODUCTION band, 'Paste STRIPE_SECRET_KEY', the destination Google Secret Manager › acme-prod › stripe-secret-key, a masked field and a Continue button">
+    <img src="docs/images/paste-light.png" width="420" alt="Lockbox's window: a red PRODUCTION band, 'Paste STRIPE_SECRET_KEY', the destination 'Production env · .env.production', a masked field confirming a live key, a Continue button and a closed 'See exactly what will be sent'">
   </picture>
 </p>
 
-1. **The agent asks.** It calls `secret_store` with the destination. The tool has no field
-   that could carry a value.
-2. **You paste.** Veil opens a local window that shows where the key goes and checks its
-   format.
-3. **Veil writes it.** The agent only learns `STORED` and a reference. It never sees the key.
+1. **The agent describes the destination.** A file, a program such as `gcloud`, or an HTTPS
+   request, with `{{secret}}` where the value goes. The tool has no field that could carry a
+   value.
+2. **You check and paste.** Lockbox's local window shows where the key goes in one line, warns
+   about anything new or odd, and checks the key's format. The exact request is one click
+   away.
+3. **Lockbox sends it.** The agent only learns `STORED` and a reference. It never sees the key.
 
 ```bash
-claude mcp add veil -e VEIL_ENV_ALLOWED_ROOTS="$PWD" -- npx -y veil-mcp serve
+claude mcp add lockbox -e LOCKBOX_ENV_ALLOWED_ROOTS="$PWD" -- npx -y lockbox-mcp serve
 ```
 
 Then ask your agent: *"store my Stripe test key in .env"*.
@@ -33,14 +36,14 @@ Then ask your agent: *"store my Stripe test key in .env"*.
 
 ## Install
 
-Veil is a stdio MCP server, so you do not run it yourself — your MCP client starts it, the
+Lockbox is a stdio MCP server, so you do not run it yourself — your MCP client starts it, the
 same way it starts any other npm-published server. Requires Node 20+.
 
 ### Claude Code
 
 ```bash
 cd ~/some/project
-claude mcp add veil -e VEIL_ENV_ALLOWED_ROOTS="$PWD" -- npx -y veil-mcp serve
+claude mcp add lockbox -e LOCKBOX_ENV_ALLOWED_ROOTS="$PWD" -- npx -y lockbox-mcp serve
 ```
 
 Add `-s project` to record it in the repository's `.mcp.json` instead of your own config.
@@ -53,11 +56,11 @@ everywhere:
 ```json
 {
   "mcpServers": {
-    "veil": {
+    "lockbox": {
       "command": "npx",
-      "args": ["-y", "veil-mcp", "serve"],
+      "args": ["-y", "lockbox-mcp", "serve"],
       "env": {
-        "VEIL_ENV_ALLOWED_ROOTS": "/absolute/path/to/your/project"
+        "LOCKBOX_ENV_ALLOWED_ROOTS": "/absolute/path/to/your/project"
       }
     }
   }
@@ -67,21 +70,23 @@ everywhere:
 Prefer a pinned install to an ephemeral one:
 
 ```bash
-npm install -g veil-mcp
-# then use `veil-mcp serve` as the command, with no npx
+npm install -g lockbox-mcp
+# then use `lockbox-mcp serve` as the command, with no npx
 ```
 
-**Set `VEIL_ENV_ALLOWED_ROOTS`.** The `.env` adapter refuses to write outside those
-directories, and it defaults only to the server's working directory. Everything else is
+The package is published to npm, unscoped, as `lockbox-mcp`.
+
+**Set `LOCKBOX_ENV_ALLOWED_ROOTS`.** File destinations refuse to write outside those
+directories, and they default only to the server's working directory. Everything else is
 optional — see [Configuration](#configuration).
 
-Google Secret Manager and Firestore need application default credentials
-(`gcloud auth application-default login`) and the optional `google-auth-library` package,
-which npm installs by default. Veil reports `ADAPTER_UNAVAILABLE` when either is missing.
+Destinations behind a login (Google Secret Manager, Vercel, GitHub) are reached through their
+own CLI, which uses the login you already have — `gcloud`, `vercel`, `gh`. See
+[Destinations](#destinations).
 
 ### First run
 
-Ask your agent for something like *"store my Stripe test key in .env"*. Veil opens its
+Ask your agent for something like *"store my Stripe test key in .env"*. Lockbox opens its
 window on your machine; the agent does not receive that link. The band at the top tells you
 the environment at a glance, and the field tells you whether the key looks right before you
 send it.
@@ -100,33 +105,33 @@ send it.
     <td width="33%" valign="top">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/images/confirm-dark.png">
-        <img src="docs/images/confirm-light.png" alt="Second step: 'Save to production?' with a field where acme-prod has been typed">
+        <img src="docs/images/confirm-light.png" alt="Second step: 'Save to .env.production?' with a field where .env.production:STRIPE_SECRET_KEY has been typed">
       </picture>
-      <p><strong>Confirms risky writes.</strong> For production or overwrites, nothing is
-      written until you type the project name.</p>
+      <p><strong>Confirms before sending.</strong> Nothing is sent until you type where it
+      goes: the host, the program or the file.</p>
     </td>
     <td width="33%" valign="top">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/images/saved-dark.png">
-        <img src="docs/images/saved-light.png" alt="'Saved' with the destination and the reference projects/acme-prod/secrets/stripe-secret-key/versions/4">
+        <img src="docs/images/saved-light.png" alt="'Saved' with the destination and the reference .env.production:STRIPE_SECRET_KEY">
       </picture>
-      <p><strong>Tells the agent only "stored".</strong> Veil wipes the value and hands back
-      a reference such as the new version.</p>
+      <p><strong>Tells the agent only "stored".</strong> Lockbox wipes the value and hands back
+      a reference such as the file and variable.</p>
     </td>
   </tr>
 </table>
 
 <kbd>Enter</kbd> continues and <kbd>Esc</kbd> cancels. The link works once: if anything
-opened it before your browser did, Veil shows an alarm and a Cancel button instead of the
-request. Veil's stderr carries structured audit JSON; nothing else is expected of you in the
+opened it before your browser did, Lockbox shows an alarm and a Cancel button instead of the
+request. Lockbox's stderr carries structured audit JSON; nothing else is expected of you in the
 terminal.
 
 ---
 
-## What Veil solves
+## What Lockbox solves
 
 It removes an entire class of failures caused by the agent **knowing** the secret.
-With Veil in the loop, a credential does not pass through:
+With Lockbox in the loop, a credential does not pass through:
 
 - LLM prompts or conversation history
 - MCP tool arguments or tool results
@@ -136,9 +141,9 @@ With Veil in the loop, a credential does not pass through:
 - URLs
 - model-visible command output
 
-## What Veil does **not** solve
+## What Lockbox does **not** solve
 
-Veil does not make an AI agent trustworthy, and it is not "safe AI". It does not
+Lockbox does not make an AI agent trustworthy, and it is not "safe AI". It does not
 guarantee that the agent picked the right destination, that it understood you, that it
 is free of prompt injection, that the destination is itself secure, that your machine is
 uncompromised, or that a credential cannot be misused later by software that legitimately
@@ -146,12 +151,12 @@ receives it.
 
 There are two separate problems here:
 
-| Question | Veil's answer |
+| Question | Lockbox's answer |
 | --- | --- |
 | Should the agent know the secret? | No. |
 | Should the agent decide alone where the secret goes? | Not without human authorization. |
 
-Veil answers those two. It does not claim to answer the rest.
+Lockbox answers those two. It does not claim to answer the rest.
 
 ---
 
@@ -161,10 +166,9 @@ Veil answers those two. It does not claim to answer the rest.
 Trusted with the credential value:
 
   The human at the keyboard
-  Veil's secure input UI          (loopback only, in your control)
-  Veil's secure input broker      (this process)
-  The selected destination adapter
-  The destination provider        (e.g. Google Secret Manager)
+  Lockbox's secure input UI       (loopback only, in your control)
+  Lockbox's secure input broker   (this process)
+  The destination you approved    (a file, a program, an HTTPS endpoint)
 
 NOT trusted with the credential value:
 
@@ -176,14 +180,13 @@ NOT trusted with the credential value:
   Logs, telemetry, crash reports
 ```
 
-Veil's runtime dependency list is one package (`zod`, for input validation) plus an
-optional `google-auth-library` used only when a cloud destination is selected. The MCP
+Lockbox's runtime dependency list is one package (`zod`, for input validation). The MCP
 protocol is implemented in-tree rather than through the official SDK, which would add ~90
 packages — including HTTP servers and an OAuth stack — to a process that holds plaintext
 credentials.
 
 This diagram does not claim the trusted components are invulnerable. It says where the
-credential is *allowed* to exist. Veil is security-sensitive software: if Veil itself is
+credential is *allowed* to exist. Lockbox is security-sensitive software: if Lockbox itself is
 malicious or compromised, the boundary is gone. Its source, dependencies and releases
 deserve the scrutiny you would give any credential-handling tool.
 
@@ -194,13 +197,13 @@ deserve the scrutiny you would give any credential-handling tool.
 **The secret flow** — the human's path, which the model cannot observe:
 
 ```text
-Human ─▶ Veil secure UI (127.0.0.1) ─▶ Broker ─▶ Adapter ─▶ Destination
+Human ─▶ Lockbox secure UI (127.0.0.1) ─▶ Broker ─▶ approved definition ─▶ Destination
 ```
 
 **The agent flow** — everything the model sees:
 
 ```text
-LLM ─▶ MCP client ─▶ Veil MCP server ─▶ non-sensitive result metadata
+LLM ─▶ MCP client ─▶ Lockbox MCP server ─▶ non-sensitive result metadata
 ```
 
 The MCP tool schema has no property capable of carrying a credential. That is structural,
@@ -212,22 +215,31 @@ arguments are screened for credential-shaped values before they are parsed.
 
 ```json
 {
-  "destination": "gcp-secret-manager",
+  "destination": "custom",
   "name": "STRIPE_SECRET_KEY",
-  "target": { "project": "my-production-project", "secret": "STRIPE_SECRET_KEY" },
-  "write_mode": "new-version",
+  "target": {
+    "definition": {
+      "kind": "command",
+      "label": "Google Secret Manager",
+      "executable": "/opt/homebrew/bin/gcloud",
+      "args": ["secrets", "versions", "add", "stripe-secret-key",
+               "--project", "acme-prod", "--data-file=-"],
+      "stdin": "{{secret}}"
+    }
+  },
   "environment": "production",
   "description": "Stripe production API key"
 }
 ```
 
-Veil replies with a `request_id`, a risk classification and the normalized destination —
+Lockbox replies with a `request_id`, a risk classification and the normalized destination —
 and opens its own authorization window on your machine. The agent polls `secret_status`.
+`destination: "saved:<name>"` reuses a destination the human saved earlier.
 
 **The agent does not get the authorization link.** That link is a capability: anything
 holding it can complete the human's half of the flow, and an agent with a shell or an HTTP
-tool is precisely the threat model. Veil hands it straight to your browser. Set
-`VEIL_DISCLOSE_AUTHORIZATION_URL=true` if your setup needs the agent to relay the link (for
+tool is precisely the threat model. Lockbox hands it straight to your browser. Set
+`LOCKBOX_DISCLOSE_AUTHORIZATION_URL=true` if your setup needs the agent to relay the link (for
 example, a remote or headless session) — and understand that this lets a compromised agent
 authorize its own request.
 
@@ -242,7 +254,7 @@ visible to you.
 save server stderr to files any process running as you can read (Claude Desktop under
 `~/Library/Logs/Claude/`, Claude Code under its cache directory), so the audit record carries
 a short fingerprint of the link instead. The full link is logged only when no browser could
-be opened (`VEIL_OPEN_BROWSER=false`, too many windows, or the opener failed), because the
+be opened (`LOCKBOX_OPEN_BROWSER=false`, too many windows, or the opener failed), because the
 operator then has no other way in.
 
 | Tool | Purpose |
@@ -251,20 +263,23 @@ operator then has no other way in.
 | `secret_status` | Poll a request. Never returns credential material. |
 | `secret_cancel` | Cancel a pending request; any entered value is destroyed. |
 | `secret_revise` | Invalidate an authorization and start a new one. Nothing is edited in place. |
-| `secret_destinations` | List destinations and the target fields each expects. |
+| `secret_destinations` | The definition contract, worked examples, and the user's saved destinations. |
 
 ### What the human sees
 
-Stage A shows the credential name, the destination path and the environment and risk
-**before** the value is entered; operation, warnings and the agent's description sit under
-"Details". High-risk operations (production overwrite, plaintext storage, application
-databases, replacing a credential) require a second confirmation in Stage B, after entry and
-before the write: the human types the project name (for a local file, `path:KEY`, such as
-`.env:API_TOKEN`), and the server checks it. This is an attention check, not
-authentication: the expected text is on the page, and it is whatever the agent chose. What
-keeps a second party out of Stage B is the session cookie. The value is never displayed back.
+Stage A shows the credential name and **one destination line** — the definition's label and
+its host, program or file — plus a line for anything worth a second look: a host never
+used before, a host spelled with non-ASCII characters, an IP address instead of a name, a
+program outside the system folders, a saved destination that changed. The full request (the
+URL, every header and the body; or the program, each argument and stdin; or the file and
+its content) sits behind **"See exactly what will be sent"**, closed by default, with the
+canonical JSON and its hash. Every custom destination needs a second confirmation in Stage
+B, after entry and before anything is sent: the human types the host, the program name or
+the file (`.env:API_TOKEN` for a variable), and the server checks it. This is an attention
+check, not authentication: the expected text is on the page. What keeps a second party out
+of Stage B is the session cookie. The value is never displayed back.
 
-POSTs are refused unless they come from Veil's own page (`Origin` and `Sec-Fetch-Site`), and
+POSTs are refused unless they come from Lockbox's own page (`Origin` and `Sec-Fetch-Site`), and
 every response sets `Cross-Origin-Opener-Policy` and `Cross-Origin-Resource-Policy` to
 `same-origin`. The credential field asks browser and third-party password managers not to
 save it.
@@ -282,16 +297,47 @@ new one.
 
 ---
 
-## Supported adapters
+## Destinations
 
-| Adapter | Class | Notes |
+There are no built-in destinations. The agent writes a **definition** — JSON with
+`{{secret}}` exactly once where the value goes, and optionally `{{name}}` for the credential
+name — and the human approves it as rendered. Three kinds:
+
+| Kind | What it does | Rules |
 | --- | --- | --- |
-| `gcp-secret-manager` | `secret-store` | Preferred. `create`, `new-version`, `replace` (disables previous versions). |
-| `env-file` | `local-plaintext` | Only `.env` / `.env.<suffix>` names, inside allowed roots. Symlink-refusing, atomic `0600` write. Git-tracked files blocked, and a new file must be git-ignored. |
-| `firestore` | `remote-application-storage` | Always warns; always requires Stage B. |
+| `file` | Writes a local file. Mode `env` sets one variable in a `.env` and keeps every other line; `create` and `replace` write the whole template. | Inside `LOCKBOX_ENV_ALLOWED_ROOTS`; `.env` / `.env.<suffix>` names only by default; no symlinks; atomic `0600`; git-tracked files refused, and a new file must be git-ignored. |
+| `command` | Runs a program with fixed arguments and hands it the value on **stdin**. | Absolute path, pinned by real path and SHA-256 at approval and re-checked before it runs; no shell; minimal environment; `{{secret}}` never in an argument; timeout. The agent learns only the exit status. |
+| `http` | Sends one HTTPS request. | `https` only; `POST`/`PUT`/`PATCH`; `{{secret}}` only in the body or a header value, never the URL; host resolved once and pinned; private and metadata addresses refused by default; redirects not followed. The agent learns the status and an optional reference read from the response, never the response. |
 
-`arbitrary-network` destinations (generic HTTP POST, webhooks) are **not implemented**, and
-the adapter registry refuses to register one.
+```jsonc
+// A .env variable
+{ "kind": "file", "label": "Project .env", "path": ".env",
+  "template": "{{name}}={{secret}}", "mode": "env" }
+
+// Google Secret Manager, through gcloud's own login
+{ "kind": "command", "label": "Google Secret Manager", "executable": "/opt/homebrew/bin/gcloud",
+  "args": ["secrets", "versions", "add", "stripe-secret-key", "--project", "acme-prod", "--data-file=-"],
+  "stdin": "{{secret}}" }
+
+// An HTTPS API that needs no other token
+{ "kind": "http", "label": "Internal secrets API",
+  "url": "https://secrets.example.com/v1/projects/acme/secrets", "method": "POST",
+  "headers": { "Content-Type": "application/json" },
+  "body": { "type": "json", "value": { "name": "{{name}}", "value": "{{secret}}" } },
+  "reference": "$.id" }
+```
+
+**Saved destinations.** At Stage B the human can tick *Save as a trusted destination* and
+name it; it is saved only if the write succeeds. Next time the agent asks for
+`saved:<name>`, and the window reads "Saved · name · host". Each entry is pinned to the
+SHA-256 of its canonical JSON: if the file is edited, the window says *Changed since you saved
+it* and reviews it as new. The store lives at `$XDG_CONFIG_HOME/lockbox/destinations.json`
+(mode `0600`), written only by Lockbox; the window can forget an entry.
+
+**What is not covered yet.** An HTTPS API that needs its own token besides the credential
+(Vercel, GitHub, Doppler REST) is reached through its CLI instead: the agent cannot supply
+that token, and Lockbox does not ask for two values in one request. Firestore has no CLI that
+writes a single field cleanly, so it has no recipe today.
 
 ---
 
@@ -303,30 +349,34 @@ Stated plainly, because a security tool that oversells itself is worse than none
   impossible. The guarantee is that only the minimal trusted transport and destination
   components do.
 - **Memory erasure is best-effort.** `SecretBuffer` wipes the exact `Buffer` it owns, and
-  the HTTP body is percent-decoded into buffers Veil wipes too. But any conversion to a
+  the HTTP body is percent-decoded into buffers Lockbox wipes too. But any conversion to a
   JavaScript string — which writing a `.env` line requires — creates an immutable copy that
-  V8 may keep until garbage collection, and that copy cannot be wiped. Veil minimizes those
+  V8 may keep until garbage collection, and that copy cannot be wiped. Lockbox minimizes those
   conversions rather than pretending they do not happen.
 - **The UI is loopback HTTP.** Any process running as your user on your machine can reach
-  it, and any such process could also imitate it. Veil refuses to bind anywhere but
+  it, and any such process could also imitate it. Lockbox refuses to bind anywhere but
   loopback. Request pages show a per-process identity phrase, but it is no longer logged,
   so today there is no second channel to compare it against: treat it as decoration, not
   as anti-spoofing. Withholding the link and making it single-use raise the bar; they do
   not stop a process that wins the race to the link, reads the browser's memory, or binds
   its own lookalike port.
 - **An agent with an unrestricted shell is out of reach.** Running as you, it can read
-  files Veil writes (including a `.env` destination), browser state and MCP logs. No page
+  files Lockbox writes (including a `.env` destination), browser state and MCP logs. No page
   design fixes that. Run the agent sandboxed — for example Claude Code's sandboxed Bash,
   with loopback and the MCP log directories outside what it may reach.
-- **Veil does not audit the destination.** If you authorize a credential into a Firestore
-  document, Veil writes it there and tells you it is a bad idea; it does not stop you.
-- **Timeouts are provider-level.** Veil cannot cancel a blocking SDK call from
-  outside it, so each adapter passes an explicit timeout to the provider. A destination
-  SDK that ignores its own timeout can still hold a request — and its secret — open.
+- **Lockbox sends where you approved, not where it is wise to.** An agent writes the
+  definition, so a hijacked agent can propose an attacker's endpoint. Lockbox shows the host
+  first, flags it when it is new or disguised, and makes you type it — but a human who
+  approves what they did not read has approved it.
+- **A definition is only as safe as what it runs.** A `command` destination runs the
+  program you approved with the value on stdin; what that program then does with it is
+  outside Lockbox.
+- **Timeouts are enforced by Lockbox.** HTTP requests and commands are cut off at
+  `LOCKBOX_ADAPTER_TIMEOUT_SECONDS`, and a command is killed with `SIGKILL`.
 - **Preflight is best-effort.** A provider that is unreachable at preflight is reported as
   unavailable rather than guessed at.
 - **Crash semantics.** A crash between the provider write and the response can leave a
-  credential written with no local record of success. Veil reports the request as failed;
+  credential written with no local record of success. Lockbox reports the request as failed;
   the destination is the source of truth.
 
 ---
@@ -334,32 +384,36 @@ Stated plainly, because a security tool that oversells itself is worse than none
 ## Local development
 
 ```bash
-git clone https://github.com/rosostolato/veil-mcp && cd veil-mcp
+git clone https://github.com/rosostolato/lockbox-mcp && cd lockbox-mcp
 npm install
 npm run check      # typecheck + lint + format + tests
 npm run build
 ```
 
-To point a client at your checkout, use `node /path/to/veil-mcp/dist/index.js` as the
+To point a client at your checkout, use `node /path/to/lockbox-mcp/dist/index.js` as the
 command instead of `npx`.
 
 ## Configuration
 
-Configuration is read from Veil's own environment — never from tool arguments, so an agent
+Configuration is read from Lockbox's own environment — never from tool arguments, so an agent
 cannot relax a policy:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `VEIL_REQUEST_TTL_SECONDS` | `300` | Request expiry. |
-| `VEIL_ADAPTER_TIMEOUT_SECONDS` | `30` | Upper bound on one destination write. |
-| `VEIL_STAGE_B_FOR_MEDIUM` | `true` | Require confirmation for medium-risk operations. |
-| `VEIL_UI_HOST` / `VEIL_UI_PORT` | `127.0.0.1` / ephemeral | Secure UI bind address. Loopback only; anything else refuses to start. |
-| `VEIL_OPEN_BROWSER` | `true` | Open the authorization window automatically. |
-| `VEIL_DISCLOSE_AUTHORIZATION_URL` | `false` | Return the authorization link to the agent. |
-| `VEIL_ENV_ALLOWED_ROOTS` | current directory | Roots the `.env` adapter may write inside. |
-| `VEIL_ALLOW_GIT_TRACKED_ENV` | `false` | Permit writing into a git-tracked, or new and un-ignored, env file. |
-| `VEIL_ENV_ALLOW_ANY_FILENAME` | `false` | Permit file names other than `.env` / `.env.<suffix>`. |
-| `VEIL_ENABLED_ADAPTERS` | all | Comma-separated allowlist. |
+| `LOCKBOX_REQUEST_TTL_SECONDS` | `300` | Request expiry. |
+| `LOCKBOX_ADAPTER_TIMEOUT_SECONDS` | `30` | Upper bound on one destination write. |
+| `LOCKBOX_STAGE_B_FOR_MEDIUM` | `true` | Require confirmation for medium-risk operations. |
+| `LOCKBOX_UI_HOST` / `LOCKBOX_UI_PORT` | `127.0.0.1` / ephemeral | Secure UI bind address. Loopback only; anything else refuses to start. |
+| `LOCKBOX_OPEN_BROWSER` | `true` | Open the authorization window automatically. |
+| `LOCKBOX_DISCLOSE_AUTHORIZATION_URL` | `false` | Return the authorization link to the agent. |
+| `LOCKBOX_ENV_ALLOWED_ROOTS` | current directory | Roots `file` destinations may write inside. |
+| `LOCKBOX_ALLOW_GIT_TRACKED_ENV` | `false` | Permit writing into a git-tracked, or new and un-ignored, file. |
+| `LOCKBOX_ENV_ALLOW_ANY_FILENAME` | `false` | Permit file names other than `.env` / `.env.<suffix>`. |
+| `LOCKBOX_CUSTOM_DESTINATIONS` | `save` | `save` lets the human save approved destinations; `once` approves every request on its own. |
+| `LOCKBOX_CUSTOM_KINDS` | `http,command,file` | Kinds an agent may define. |
+| `LOCKBOX_CUSTOM_HTTP_HOSTS` | any | Comma-separated allowlist of HTTPS hosts; empty means any host, still reviewed. |
+| `LOCKBOX_CUSTOM_HTTP_ALLOW_PRIVATE` | `false` | Permit hosts that resolve to loopback, private or link-local addresses. |
+| `LOCKBOX_CUSTOM_STORE_PATH` | `$XDG_CONFIG_HOME/lockbox/destinations.json` | Where saved destinations live. |
 
 ## Tests
 

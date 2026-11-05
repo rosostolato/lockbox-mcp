@@ -41,7 +41,7 @@ export const ErrorCode = {
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];
 
 /**
- * An error that is safe to hand to the model. `message` is written by Veil,
+ * An error that is safe to hand to the model. `message` is written by Lockbox,
  * never by a provider. `detail` may only contain short, adapter-authored,
  * non-sensitive strings.
  */
@@ -77,20 +77,20 @@ export const INTERNAL_ERROR: PublicError = publicError(
 );
 
 /** Base class for errors that already know their public representation. */
-export class VeilError extends Error {
+export class LockboxError extends Error {
   readonly public: PublicError;
 
   constructor(publicRepresentation: PublicError) {
     super(publicRepresentation.code);
-    this.name = 'VeilError';
+    this.name = 'LockboxError';
     this.public = publicRepresentation;
   }
 }
 
-export function veilError(
+export function lockboxError(
   code: string,
   message: string,
   detail?: Record<string, string>,
-): VeilError {
-  return new VeilError(publicError(code, message, detail));
+): LockboxError {
+  return new LockboxError(publicError(code, message, detail));
 }
