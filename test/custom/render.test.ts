@@ -1,6 +1,6 @@
 /** docs/specs/custom-destinations — TASK-007, TASK-007b, TASK-008, TASK-009 */
 
-import { chmodSync, writeFileSync } from 'node:fs';
+import { chmodSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -79,7 +79,8 @@ describe('custom destination rendering', () => {
       }),
       'STRIPE_SECRET_KEY',
     );
-    expect(view).toContain('<strong>Runs</strong> /bin/sh');
+    // The resolved binary is shown: /bin/sh on macOS, /usr/bin/dash on Debian.
+    expect(view).toContain(`<strong>Runs</strong> ${realpathSync('/bin/sh')}`);
     expect(view).toContain('<li><code>two words</code></li>');
     expect(view).toContain(
       '<li><code><span class="chip-name">STRIPE_SECRET_KEY</span></code></li>',
