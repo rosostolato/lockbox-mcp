@@ -19,7 +19,7 @@ import { getLogger, type AuditLogger } from '../logging.js';
 import { safeDisplay } from '../redaction.js';
 import { ToolRouter, toolResultToMcp } from './tools.js';
 
-export const LOCKBOX_VERSION = '0.1.0';
+export const LOCKBOX_VERSION = '0.1.1';
 export const PROTOCOL_VERSION = '2025-06-18';
 export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'] as const;
 export const MAX_FRAME_BYTES = 1 << 20;

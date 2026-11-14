@@ -436,7 +436,7 @@ See [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) for the invariant-to-test
 
 ## Project status
 
-Version 0.1.0, built to [`SPEC.md`](SPEC.md), which stays in the repository as the
+Version 0.1.1, built to [`SPEC.md`](SPEC.md), which stays in the repository as the
 authoritative description of the intended behaviour. The implementation is TypeScript on
 Node; it was ported from an equivalent Python implementation, which remains in the git
 history. Every substantial module and test

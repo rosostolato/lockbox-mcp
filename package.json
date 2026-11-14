@@ -1,6 +1,7 @@
 {
   "name": "lockbox-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "mcpName": "io.github.rosostolato/lockbox-mcp",
   "description": "An MCP server and secure input broker: an AI agent can place a credential without ever receiving it, while a trusted human-controlled UI authorizes where it goes.",
   "license": "Apache-2.0",
   "author": "Eduardo Rosostolato",
