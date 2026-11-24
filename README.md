@@ -5,6 +5,7 @@
 [![CI](https://github.com/rosostolato/lockbox-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/rosostolato/lockbox-mcp/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Node 20+](https://img.shields.io/badge/node-20%2B-blue.svg)](https://nodejs.org/)
+[![rosostolato/lockbox-mcp MCP server](https://glama.ai/mcp/servers/rosostolato/lockbox-mcp/badges/score.svg)](https://glama.ai/mcp/servers/rosostolato/lockbox-mcp)
 
 You ask Claude, Cursor or any MCP client to *"put the Stripe key in our .env"* — or in Secret
 Manager, Vercel, your own API. The agent describes **where** it goes. You read that in Lockbox's
